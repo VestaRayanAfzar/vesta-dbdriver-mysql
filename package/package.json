@@ -1,13 +1,13 @@
 {
-  "name": "vesta-dbdriver-mysql",
-  "version": "0.1.1",
+  "name": "vesta-driver-mysql",
+  "version": "0.1.2",
   "description": "Vesta Platform MySQL drievr based on Database Class",
   "keywords": [
     "NodeJS",
     "TypeScript",
-    "Persian",
-    "Date",
-    "DateTime"
+    "Database",
+    "MySQL",
+    "Schema"
   ],
   "main": "MySQL.js",
   "typings": "MySQL.d.ts",
@@ -19,13 +19,13 @@
     }
   ],
   "bugs": {
-    "url": "https://github.com/VestaRayanAfzar/vesta-datetime-persian/issues",
+    "url": "https://github.com/VestaRayanAfzar/vesta-driver-mysql/issues",
     "email": "bishehsary@gmail.com"
   },
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/VestaRayanAfzar/vesta-datetime-persian.git"
+    "url": "git+https://github.com/VestaRayanAfzar/vesta-driver-mysql.git"
   },
   "dependencies": {
     "mysql": "^2.10.2",

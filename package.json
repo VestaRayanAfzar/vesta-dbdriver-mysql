@@ -21,13 +21,13 @@
     }
   ],
   "bugs": {
-    "url": "https://github.com/VestaRayanAfzar/vesta-dbdriver-mysql/issues",
+    "url": "https://github.com/VestaRayanAfzar/vesta-driver-mysql/issues",
     "email": "bishehsary@gmail.com"
   },
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/VestaRayanAfzar/vesta-dbdriver-mysql.git"
+    "url": "git+https://github.com/VestaRayanAfzar/vesta-driver-mysql.git"
   },
   "dependencies": {
     "mysql": "^2.10.2",
