@@ -16,49 +16,43 @@ interface ICalculatedQueryOptions {
     condition:string,
 }
 
-export class MySQL extends Database {
-    private static pool:IPool;
-    private static staticInstance:IConnection;
-    private static regenerateSchema:boolean = false;
+export class MySQL extends Database  {
+    private pool:IPool;
+    private connection:IConnection;
     private schemaList:{[name:string]:Schema} = {};
+    private config:IDatabaseConfig;
 
-    public static getInstance(config:IDatabaseConfig, regenerateSchema:boolean = false):Promise<Database> {
-        if (MySQL.staticInstance) return Promise.resolve(new MySQL(MySQL.staticInstance));
-        MySQL.regenerateSchema = regenerateSchema;
+    public connect():Promise<Database> {
+        if (this.connection) return Promise.resolve(this);
         return new Promise<Database>((resolve, reject)=> {
-            if (!MySQL.pool) {
-                MySQL.pool = mysql.createPool(<IConnectionConfig>{
-                    host: config.host,
-                    port: +config.port,
-                    user: config.user,
-                    password: config.password,
-                    database: config.database
+            if (!this.pool) {
+                this.pool = mysql.createPool(<IConnectionConfig>{
+                    host: this.config.host,
+                    port: +this.config.port,
+                    user: this.config.user,
+                    password: this.config.password,
+                    database: this.config.database
                 });
             }
-            MySQL.pool.getConnection((err, connection)=> {
+            this.pool.getConnection((err, connection)=> {
                 if (err) return reject(new DatabaseError(Err.Code.DBConnection, err.message));
-                MySQL.staticInstance = connection;
-                var result:Promise<boolean> = MySQL.regenerateSchema ? MySQL.initializeDatabase(config, connection) : Promise.resolve<boolean>();
-                result.then(()=> {
-                    resolve(new MySQL(MySQL.staticInstance));
-                })
+                this.connection = connection;
+                resolve(this);
             });
         })
     }
 
-    constructor(connection:IConnection) {
+    constructor(config:IDatabaseConfig, schemaList:{[name:string]:Schema}) {
         super();
-        if (!connection) throw new DatabaseError(Err.Code.DBConnection);
+        this.schemaList = schemaList;
+        this.config = config;
     }
 
-    public init(schemaList:Array<Schema>):Promise<boolean> {
-        for (var i = schemaList.length; i--;) {
-            this.schemaList[schemaList[i].name] = schemaList[i];
-        }
-        var createSchemaPromise = Promise.resolve();
-        if (MySQL.regenerateSchema) {
-            for (var i = 0; i < schemaList.length; i++) {
-                createSchemaPromise = createSchemaPromise.then(this.createTable(schemaList[i]));
+    public init():Promise<boolean> {
+        var createSchemaPromise = this.initializeDatabase();
+        for (var schema in this.schemaList) {
+            if(this.schemaList.hasOwnProperty(schema)) {
+                createSchemaPromise = createSchemaPromise.then(this.createTable(this.schemaList[schema]));
             }
         }
         return createSchemaPromise;
@@ -97,7 +91,7 @@ export class MySQL extends Database {
         var params:ICalculatedQueryOptions = this.getQueryParams(query);
         var result:IQueryResult<T> = <IQueryResult<T>>{};
         return new Promise<IQueryResult<T>>((resolve, reject)=> {
-            MySQL.staticInstance.query(`SELECT ${params.fields} FROM \`${query.model}\` ${params.condition} ${params.orderBy} ${params.limit}`, (err, list)=> {
+            this.connection.query(`SELECT ${params.fields} FROM \`${query.model}\` ${params.condition} ${params.orderBy} ${params.limit}`, (err, list)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBQuery);
                     reject(result);
@@ -121,7 +115,7 @@ export class MySQL extends Database {
             properties.push(`\`${analysedValue.properties[i].field}\` = ${analysedValue.properties[i].value}`);
         }
         return new Promise((resolve, reject)=> {
-            MySQL.staticInstance.query(`INSERT INTO \`${model}\` SET ${analysedValue.properties.join(',')}`, (err, insertResult)=> {
+            this.connection.query(`INSERT INTO \`${model}\` SET ${analysedValue.properties.join(',')}`, (err, insertResult)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBInsert);
                     reject(result);
@@ -135,7 +129,7 @@ export class MySQL extends Database {
                 }
                 Promise.all(steps)
                     .then(data=> {
-                        MySQL.staticInstance.query(`SELECT * FROM \`${model}\` WHERE id = ${insertResult['insertId']}`, (err, list)=> {
+                        this.connection.query(`SELECT * FROM \`${model}\` WHERE id = ${insertResult['insertId']}`, (err, list)=> {
                             if (err) {
                                 result.error = new Err(Err.Code.DBDelete);
                                 reject(result);
@@ -170,7 +164,7 @@ export class MySQL extends Database {
 
 
         return new Promise((resolve, reject)=> {
-            MySQL.staticInstance.query(`INSERT INTO ${model}} (${fieldsName.join(',')}) 
+            this.connection.query(`INSERT INTO ${model}} (${fieldsName.join(',')}) 
                     VALUES ${insertList.join(',')}`, (err, insertResult)=> {
                 if (err) {
                     reject(err)
@@ -223,12 +217,12 @@ export class MySQL extends Database {
             }
         }
         return new Promise((resolve, reject)=> {
-            MySQL.staticInstance.query(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE id = ${value['id']}`, (err, updateResult)=> {
+            this.connection.query(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE id = ${value['id']}`, (err, updateResult)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBUpdate);
                     reject(result);
                 }
-                MySQL.staticInstance.query(`SELECT * FROM \`${model}\` WHERE id = ${value['id']}`, (err, list)=> {
+                this.connection.query(`SELECT * FROM \`${model}\` WHERE id = ${value['id']}`, (err, list)=> {
                     if (err) {
                         result.error = new Err(Err.Code.DBDelete);
                         reject(result);
@@ -250,7 +244,7 @@ export class MySQL extends Database {
             }
         }
         return new Promise((resolve, reject)=> {
-            MySQL.staticInstance.query(`SELECT id FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`, (err, list)=> {
+            this.connection.query(`SELECT id FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`, (err, list)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBQuery);
                     reject(result);
@@ -260,12 +254,12 @@ export class MySQL extends Database {
                     ids.push(list[i].id);
                 }
                 if (ids.length) {
-                    MySQL.staticInstance.query(`UPDATE \`${model}\` SET ${properties.join(',')}  WHERE id IN (${ids.join(',')})}`, (err, updateResult)=> {
+                    this.connection.query(`UPDATE \`${model}\` SET ${properties.join(',')}  WHERE id IN (${ids.join(',')})}`, (err, updateResult)=> {
                         if (err) {
                             result.error = new Err(Err.Code.DBDelete);
                             reject(result);
                         }
-                        MySQL.staticInstance.query(`SELECT * FROM \`${model}\` WHERE id IN (${ids.join(',')})`, (err, list)=> {
+                        this.connection.query(`SELECT * FROM \`${model}\` WHERE id IN (${ids.join(',')})`, (err, list)=> {
                             if (err) {
                                 result.error = new Err(Err.Code.DBDelete);
                                 reject(result);
@@ -289,7 +283,7 @@ export class MySQL extends Database {
         var result:IDeleteResult = <IDeleteResult>{};
         var fields = this.schemaList[model].getFields();
         return new Promise((resolve, reject)=> {
-            MySQL.staticInstance.query(`DELETE FROM \`${model}\` WHERE id = ${id}}`, (err, deleteResult)=> {
+            this.connection.query(`DELETE FROM \`${model}\` WHERE id = ${id}}`, (err, deleteResult)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBDelete);
                     reject(result);
@@ -308,7 +302,7 @@ export class MySQL extends Database {
         var sqlCondition = this.getCondition(condition);
         var result:IDeleteResult = <IDeleteResult>{};
         return new Promise((resolve, reject)=> {
-            MySQL.staticInstance.query(`SELECT id FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`, (err, list)=> {
+            this.connection.query(`SELECT id FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`, (err, list)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBQuery);
                     reject(result);
@@ -318,7 +312,7 @@ export class MySQL extends Database {
                     ids.push(list[i].id);
                 }
                 if (ids.length) {
-                    MySQL.staticInstance.query(`DELETE FROM \`${model}\` WHERE id IN ${ids.join(',')}}`, (err, deleteResult)=> {
+                    this.connection.query(`DELETE FROM \`${model}\` WHERE id IN ${ids.join(',')}}`, (err, deleteResult)=> {
                         if (err) {
                             result.error = new Err(Err.Code.DBDelete);
                             reject(result);
@@ -447,7 +441,7 @@ export class MySQL extends Database {
             return new Promise((resolve, reject)=> {
                 var leftKey = this.camelCase(query.model);
                 var rightKey = this.camelCase(relationship.model.schema.name);
-                MySQL.staticInstance.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
+                this.connection.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
                 LEFT JOIN \`${query.model + 'Has' + this.pascalCase(relationName)}\` r 
                 ON (m.id = r.${rightKey}) 
                 WHERE r.${leftKey} IN (${ids.join(',')})`, (err, relatedList)=> {
@@ -529,7 +523,7 @@ export class MySQL extends Database {
         var createDefinition = this.createDefinition(fields, schema.name);
         var ownTable = `CREATE TABLE IF NOT EXISTS ${schema.name} (\n${createDefinition.ownColumn})\n ENGINE=InnoDB DEFAULT CHARSET=utf8`;
         var ownTablePromise = new Promise((resolve, reject)=> {
-            MySQL.staticInstance.query(ownTable, (err, result)=> {
+            this.connection.query(ownTable, (err, result)=> {
                 if (err) {
                     return reject()
                 }
@@ -541,7 +535,7 @@ export class MySQL extends Database {
                 return resolve(true);
             }
             var translateTable = `CREATE TABLE IF NOT EXISTS ${schema.name}_translation (\n${createDefinition.lingualColumn}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8`;
-            MySQL.staticInstance.query(translateTable, (err, result)=> {
+            this.connection.query(translateTable, (err, result)=> {
                 if (err) {
                     return reject()
                 }
@@ -676,10 +670,10 @@ export class MySQL extends Database {
         return typeSyntax;
     }
 
-    private static initializeDatabase(config:IDatabaseConfig, connection:IConnection) {
+    private initializeDatabase() {
         return new Promise((resolve, reject)=> {
-            var sql = `ALTER DATABASE \`${config.database}\`  CHARSET = utf8 COLLATE = utf8_general_ci;`;
-            connection.query(sql, (err, result)=> {
+            var sql = `ALTER DATABASE \`${this.config.database}\`  CHARSET = utf8 COLLATE = utf8_general_ci;`;
+            this.connection.query(sql, (err, result)=> {
                 if (err) {
                     return reject()
                 }
@@ -723,7 +717,7 @@ export class MySQL extends Database {
             && fields[relation].properties.relation.type != Relationship.Type.Many2Many) {
             if (+value > 0) {
                 return new Promise((resolve, reject)=> {
-                    MySQL.staticInstance.query(`UPDATE \`${modelName}\` SET \`${relation}\` = '${value}' WHERE id='${model['id']}' `, (err, updateResult)=> {
+                    this.connection.query(`UPDATE \`${modelName}\` SET \`${relation}\` = '${value}' WHERE id='${model['id']}' `, (err, updateResult)=> {
                         if (err) {
                             reject(new Err(Err.Code.DBUpdate));
                         }
@@ -784,7 +778,7 @@ export class MySQL extends Database {
                     insertList.push(`(${model['id']},${relationIds[i]})`);
                 }
                 return new Promise((resolve, reject)=> {
-                    MySQL.staticInstance.query(`INSERT INTO ${modelName}Has${this.pascalCase(relation)} 
+                    this.connection.query(`INSERT INTO ${modelName}Has${this.pascalCase(relation)} 
                     (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(',')}`, (err, insertResult)=> {
                         if (err) {
                             reject(new Err(Err.Code.DBInsert));
@@ -823,7 +817,7 @@ export class MySQL extends Database {
                     })
             });
         return new Promise((resolve, reject)=> {
-            MySQL.staticInstance.query(`UPDATE \`${model}\` SET ${relation} = 0 WHERE ${paredCondition}`, (err, updateResult)=> {
+            this.connection.query(`UPDATE \`${model}\` SET ${relation} = 0 WHERE ${paredCondition}`, (err, updateResult)=> {
                 if (err) {
                     reject(new Err(Err.Code.DBUpdate))
                 } else {
