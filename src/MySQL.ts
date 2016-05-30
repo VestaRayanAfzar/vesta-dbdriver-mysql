@@ -1,7 +1,7 @@
 import * as mysql from "mysql";
 import {IPool, IConnectionConfig, IConnection} from "mysql";
 import {Schema} from "vesta-schema/Schema";
-import {IDatabaseConfig, Database, IQueryOption} from "vesta-schema/Database";
+import {IDatabaseConfig, Database, IQueryOption, ISchemaList, IModelCollection} from "vesta-schema/Database";
 import {Err} from "vesta-util/Err";
 import {DatabaseError} from "vesta-schema/error/DatabaseError";
 import {IDeleteResult, IUpsertResult, IQueryResult} from "vesta-schema/ICRUDResult";
@@ -16,11 +16,12 @@ interface ICalculatedQueryOptions {
     condition:string,
 }
 
-export class MySQL extends Database  {
+export class MySQL extends Database {
     private pool:IPool;
     private connection:IConnection;
-    private schemaList:{[name:string]:Schema} = {};
+    private schemaList:ISchemaList = {};
     private config:IDatabaseConfig;
+    private models:IModelCollection;
 
     public connect():Promise<Database> {
         if (this.connection) return Promise.resolve(this);
@@ -42,34 +43,41 @@ export class MySQL extends Database  {
         })
     }
 
-    constructor(config:IDatabaseConfig, schemaList:{[name:string]:Schema}) {
+    constructor(config:IDatabaseConfig, models:IModelCollection) {
         super();
+        var schemaList:ISchemaList = {};
+        for (var model in models) {
+            if (models.hasOwnProperty(model)) {
+                schemaList[model] = models[model].schema;
+            }
+        }
         this.schemaList = schemaList;
+        this.models = models;
         this.config = config;
     }
 
     public init():Promise<boolean> {
         var createSchemaPromise = this.initializeDatabase();
         for (var schema in this.schemaList) {
-            if(this.schemaList.hasOwnProperty(schema)) {
+            if (this.schemaList.hasOwnProperty(schema)) {
                 createSchemaPromise = createSchemaPromise.then(this.createTable(this.schemaList[schema]));
             }
         }
         return createSchemaPromise;
     }
 
-    public findById<T>(model:string, id:number | string, option ?:IQueryOption):Promise <IQueryResult<T>> {
-        var query = new Vql(model)
-            .where(new Condition(Condition.Operator.EqualTo).compare('id', id))
-            .select(...option.fields)
-            .fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit)
-            .limitTo(option.limit)
-            .fetchRecordFor(...option.relations);
-        query.orderBy = option.orderBy;
+    public findById<T>(model:string, id:number | string, option :IQueryOption = {}):Promise <IQueryResult<T>> {
+        var query = new Vql(model);
+            query.where(new Condition(Condition.Operator.EqualTo).compare('id', id));
+        if (option.fields) query.select(...option.fields);
+        if (option.offset || option.page) query.fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit);
+        if (option.relations) query.fetchRecordFor(...option.relations);
+        if (option.limit) query.limitTo(option.limit);
+        query.orderBy = option.orderBy || [];
         return this.findByQuery(query);
     }
 
-    public findByModelValues<T>(model:string, modelValues:T, option ?:IQueryOption):Promise < IQueryResult <T>> {
+    public findByModelValues<T>(model:string, modelValues:T, option:IQueryOption = {}):Promise < IQueryResult <T>> {
         var condition = new Condition(Condition.Operator.And);
         for (var key in modelValues) {
             if (modelValues.hasOwnProperty(key)) {
@@ -78,12 +86,12 @@ export class MySQL extends Database  {
                 condition.append(condition);
             }
         }
-        var query = new Vql(model)
-            .select(...option.fields)
-            .fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit)
-            .fetchRecordFor(...option.relations)
-            .where(condition);
-        query.orderBy = option.orderBy;
+        var query = new Vql(model);
+        if (option.fields) query.select(...option.fields);
+        if (option.offset || option.page) query.fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit);
+        if (option.relations) query.fetchRecordFor(...option.relations);
+        query.where(condition);
+        query.orderBy = option.orderBy || [];
         return this.findByQuery(query);
     }
 
@@ -94,7 +102,7 @@ export class MySQL extends Database  {
             this.connection.query(`SELECT ${params.fields} FROM \`${query.model}\` ${params.condition} ${params.orderBy} ${params.limit}`, (err, list)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBQuery);
-                    reject(result);
+                    return reject(result);
                 }
                 this.getManyToManyRelation(list, query)
                     .then(list=> {
@@ -115,15 +123,15 @@ export class MySQL extends Database  {
             properties.push(`\`${analysedValue.properties[i].field}\` = ${analysedValue.properties[i].value}`);
         }
         return new Promise((resolve, reject)=> {
-            this.connection.query(`INSERT INTO \`${model}\` SET ${analysedValue.properties.join(',')}`, (err, insertResult)=> {
+            this.connection.query(`INSERT INTO \`${model}\` SET ${properties.join(',')}`, (err, insertResult)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBInsert);
-                    reject(result);
+                    return reject(result);
                 }
                 var steps = [];
                 for (var key in analysedValue.relations) {
                     if (analysedValue.relations.hasOwnProperty(key)) {
-                        steps.push(this.addRelation({id: insertResult['insertId']}, key, analysedValue.relations[key]));
+                        steps.push(this.addRelation(new this.models[model]({id: insertResult['insertId']}), key, analysedValue.relations[key]));
                     }
 
                 }
@@ -131,8 +139,8 @@ export class MySQL extends Database  {
                     .then(data=> {
                         this.connection.query(`SELECT * FROM \`${model}\` WHERE id = ${insertResult['insertId']}`, (err, list)=> {
                             if (err) {
-                                result.error = new Err(Err.Code.DBDelete);
-                                reject(result);
+                                result.error = new Err(Err.Code.DBInsert);
+                                return reject(result);
                             }
                             result.items = list;
                             resolve(result)
@@ -167,7 +175,7 @@ export class MySQL extends Database  {
             this.connection.query(`INSERT INTO ${model}} (${fieldsName.join(',')}) 
                     VALUES ${insertList.join(',')}`, (err, insertResult)=> {
                 if (err) {
-                    reject(err)
+                    return reject(err)
                 }
                 result.items = insertResult;
                 resolve(result);
@@ -220,12 +228,12 @@ export class MySQL extends Database  {
             this.connection.query(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE id = ${value['id']}`, (err, updateResult)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBUpdate);
-                    reject(result);
+                    return reject(result);
                 }
                 this.connection.query(`SELECT * FROM \`${model}\` WHERE id = ${value['id']}`, (err, list)=> {
                     if (err) {
-                        result.error = new Err(Err.Code.DBDelete);
-                        reject(result);
+                        result.error = new Err(Err.Code.DBQuery);
+                        return reject(result);
                     }
                     result.items = list;
                     resolve(result)
@@ -247,7 +255,7 @@ export class MySQL extends Database  {
             this.connection.query(`SELECT id FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`, (err, list)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBQuery);
-                    reject(result);
+                    return reject(result);
                 }
                 var ids = [];
                 for (var i = list.length; i--;) {
@@ -256,13 +264,13 @@ export class MySQL extends Database  {
                 if (ids.length) {
                     this.connection.query(`UPDATE \`${model}\` SET ${properties.join(',')}  WHERE id IN (${ids.join(',')})}`, (err, updateResult)=> {
                         if (err) {
-                            result.error = new Err(Err.Code.DBDelete);
-                            reject(result);
+                            result.error = new Err(Err.Code.DBUpdate);
+                            return reject(result);
                         }
                         this.connection.query(`SELECT * FROM \`${model}\` WHERE id IN (${ids.join(',')})`, (err, list)=> {
                             if (err) {
-                                result.error = new Err(Err.Code.DBDelete);
-                                reject(result);
+                                result.error = new Err(Err.Code.DBQuery);
+                                return reject(result);
                             }
 
                             result.items = list;
@@ -283,10 +291,10 @@ export class MySQL extends Database  {
         var result:IDeleteResult = <IDeleteResult>{};
         var fields = this.schemaList[model].getFields();
         return new Promise((resolve, reject)=> {
-            this.connection.query(`DELETE FROM \`${model}\` WHERE id = ${id}}`, (err, deleteResult)=> {
+            this.connection.query(`DELETE FROM \`${model}\` WHERE id = ${id}`, (err, deleteResult)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBDelete);
-                    reject(result);
+                    return reject(result);
                 }
                 for (var field in this.schemaList[model].getFields()) {
                     if (fields.hasOwnProperty(field) && fields[field].properties.type == FieldType.Relation) {
@@ -305,17 +313,17 @@ export class MySQL extends Database  {
             this.connection.query(`SELECT id FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`, (err, list)=> {
                 if (err) {
                     result.error = new Err(Err.Code.DBQuery);
-                    reject(result);
+                    return reject(result);
                 }
                 var ids = [];
                 for (var i = list.length; i--;) {
                     ids.push(list[i].id);
                 }
                 if (ids.length) {
-                    this.connection.query(`DELETE FROM \`${model}\` WHERE id IN ${ids.join(',')}}`, (err, deleteResult)=> {
+                    this.connection.query(`DELETE FROM \`${model}\` WHERE id IN (${ids.join(',')})`, (err, deleteResult)=> {
                         if (err) {
                             result.error = new Err(Err.Code.DBDelete);
-                            reject(result);
+                            return reject(result);
                         }
                         result.items = ids;
                         resolve(result)
@@ -336,7 +344,11 @@ export class MySQL extends Database  {
         for (var key in value) {
             if (value.hasOwnProperty(key) && schemaFieldsName.indexOf(key) >= 0 && value[key] !== undefined) {
                 if (schemaFields[key].properties.type != FieldType.Relation) {
-                    properties.push({field: key, value: value})
+                    var thisValue:string|number = `'${value[key]}'`;
+                    if (FieldType.Boolean == schemaFields[key].properties.type) {
+                        thisValue = value[key] ? 1 : 0
+                    }
+                    properties.push({field: key, value: thisValue})
                 } else {
                     relations[key] = value[key]
                 }
@@ -446,7 +458,7 @@ export class MySQL extends Database  {
                 ON (m.id = r.${rightKey}) 
                 WHERE r.${leftKey} IN (${ids.join(',')})`, (err, relatedList)=> {
                     if (err) {
-                        reject(err);
+                        return reject(err);
                     }
                     var result = {};
                     result[relationName] = relatedList;
@@ -618,8 +630,9 @@ export class MySQL extends Database  {
             return '';
         }
         var columnSyntax = `\`${filed.fieldName}\` ${this.getType(properties)}`;
+        var defaultValue = properties.type != FieldType.Boolean ? `'${properties.default}'` : !!properties.default;
         columnSyntax += properties.required || properties.primary ? ' NOT NULL' : '';
-        columnSyntax += properties.default ? ` DEFAULT '${properties.default}'` : '';
+        columnSyntax += properties.default ? ` DEFAULT ${defaultValue}` : '';
         columnSyntax += properties.unique ? ' UNIQUE ' : '';
         columnSyntax += properties.primary ? ' AUTO_INCREMENT ' : '';
         return columnSyntax;
@@ -629,7 +642,7 @@ export class MySQL extends Database  {
         var typeSyntax;
         switch (properties.type) {
             case FieldType.Boolean:
-                typeSyntax = "BIT(1)";
+                typeSyntax = "BIT";
                 break;
             case FieldType.EMail:
             case FieldType.File:
@@ -719,7 +732,7 @@ export class MySQL extends Database  {
                 return new Promise((resolve, reject)=> {
                     this.connection.query(`UPDATE \`${modelName}\` SET \`${relation}\` = '${value}' WHERE id='${model['id']}' `, (err, updateResult)=> {
                         if (err) {
-                            reject(new Err(Err.Code.DBUpdate));
+                            return reject(new Err(Err.Code.DBUpdate));
                         }
                         result.items = updateResult;
                         resolve(result);
@@ -769,7 +782,7 @@ export class MySQL extends Database  {
                         resolve(relationIds)
                     })
                     .catch(()=> {
-                        reject(new Err(Err.Code.DBInsert));
+                        return reject(new Err(Err.Code.DBInsert));
                     })
             })
             .then(relationIds=> {
@@ -781,7 +794,7 @@ export class MySQL extends Database  {
                     this.connection.query(`INSERT INTO ${modelName}Has${this.pascalCase(relation)} 
                     (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(',')}`, (err, insertResult)=> {
                         if (err) {
-                            reject(new Err(Err.Code.DBInsert));
+                            return reject(new Err(Err.Code.DBInsert));
                         }
                         result.items = insertResult;
                         resolve(result);
@@ -819,7 +832,7 @@ export class MySQL extends Database  {
         return new Promise((resolve, reject)=> {
             this.connection.query(`UPDATE \`${model}\` SET ${relation} = 0 WHERE ${paredCondition}`, (err, updateResult)=> {
                 if (err) {
-                    reject(new Err(Err.Code.DBUpdate))
+                    return reject(new Err(Err.Code.DBUpdate))
                 } else {
                     result.items = updateResult;
                     resolve(result);

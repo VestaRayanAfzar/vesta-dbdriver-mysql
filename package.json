@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "mysql": "^2.10.2",
-    "vesta-schema": "^0.3.0",
+    "vesta-schema": "^0.3.1",
     "vesta-util": "^0.2.6"
   },
   "devDependencies": {}
