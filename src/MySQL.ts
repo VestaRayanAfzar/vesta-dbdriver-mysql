@@ -71,9 +71,7 @@ export class MySQL extends Database {
         var query = new Vql(model);
         query.where(new Condition(Condition.Operator.EqualTo).compare('id', id));
         if (option.fields) query.select(...option.fields);
-        if (option.offset || option.page) query.fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit);
         if (option.relations) query.fetchRecordFor(...option.relations);
-        if (option.limit) query.limitTo(option.limit);
         query.orderBy = option.orderBy || [];
         return this.findByQuery(query);
     }
@@ -91,6 +89,7 @@ export class MySQL extends Database {
         if (option.fields) query.select(...option.fields);
         if (option.offset || option.page) query.fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit);
         if (option.relations) query.fetchRecordFor(...option.relations);
+        if (option.limit || query.limit === 0) query.limitTo(option.limit);
         query.where(condition);
         query.orderBy = option.orderBy || [];
         return this.findByQuery(query);
@@ -365,7 +364,10 @@ export class MySQL extends Database {
     private getQueryParams(query:Vql):ICalculatedQueryOptions {
         var params:ICalculatedQueryOptions = <ICalculatedQueryOptions>{};
         query.offset = query.offset ? query.offset : (query.page ? query.page - 1 : 0 ) * query.limit;
-        params.limit = `LIMIT ${query.offset ? query.offset : 0 }, ${query.limit ? query.limit : 50 } `;
+        params.limit = '';
+        if (query.limit !== 0) {
+            params.limit = `LIMIT ${query.offset ? query.offset : 0 }, ${query.limit ? query.limit : 50 } `;
+        }
         params.orderBy = '';
         if (query.orderBy.length) {
             var orderArray = [];
