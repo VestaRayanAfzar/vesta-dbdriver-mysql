@@ -534,7 +534,7 @@ export class MySQL extends Database {
     private createTable(schema:Schema) {
         var fields = schema.getFields();
         var createDefinition = this.createDefinition(fields, schema.name);
-        var ownTable = `DROP TABLE ${schema.name};CREATE TABLE ${schema.name} (\n${createDefinition.ownColumn})\n ENGINE=InnoDB DEFAULT CHARSET=utf8`;
+        var ownTable = `DROP TABLE IF EXISTS ${schema.name};CREATE TABLE ${schema.name} (\n${createDefinition.ownColumn})\n ENGINE=InnoDB DEFAULT CHARSET=utf8`;
         var ownTablePromise = new Promise((resolve, reject)=> {
             this.connection.query(ownTable, (err, result)=> {
                 if (err) {
@@ -547,10 +547,10 @@ export class MySQL extends Database {
             if (!createDefinition.lingualColumn) {
                 return resolve(true);
             }
-            var translateTable = `DROP TABLE ${schema.name}_translation;CREATE TABLE ${schema.name}_translation (\n${createDefinition.lingualColumn}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8`;
+            var translateTable = `DROP TABLE IF EXISTS ${schema.name}_translation;CREATE TABLE ${schema.name}_translation (\n${createDefinition.lingualColumn}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8`;
             this.connection.query(translateTable, (err, result)=> {
                 if (err) {
-                    return reject()
+                    return reject(err)
                 }
                 return resolve(result);
             });
@@ -689,7 +689,7 @@ export class MySQL extends Database {
             var sql = `ALTER DATABASE \`${this.config.database}\`  CHARSET = utf8 COLLATE = utf8_general_ci;`;
             this.connection.query(sql, (err, result)=> {
                 if (err) {
-                    return reject()
+                    return reject(err)
                 }
                 return resolve(result);
             })
