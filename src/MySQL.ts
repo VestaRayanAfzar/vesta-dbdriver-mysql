@@ -80,9 +80,7 @@ export class MySQL extends Database {
         var condition = new Condition(Condition.Operator.And);
         for (var key in modelValues) {
             if (modelValues.hasOwnProperty(key)) {
-                var condition = new Condition(Condition.Operator.EqualTo);
-                condition.compare(key, modelValues[key]);
-                condition.append(condition);
+                condition.append((new Condition(Condition.Operator.EqualTo)).compare(key, modelValues[key]));
             }
         }
         var query = new Vql(model);
