@@ -32,7 +32,8 @@ export class MySQL extends Database {
                     port: +this.config.port,
                     user: this.config.user,
                     password: this.config.password,
-                    database: this.config.database
+                    database: this.config.database,
+                    multipleStatements: true
                 });
             }
             this.pool.getConnection((err, connection)=> {
@@ -66,9 +67,9 @@ export class MySQL extends Database {
         return createSchemaPromise;
     }
 
-    public findById<T>(model:string, id:number | string, option :IQueryOption = {}):Promise <IQueryResult<T>> {
+    public findById<T>(model:string, id:number | string, option:IQueryOption = {}):Promise <IQueryResult<T>> {
         var query = new Vql(model);
-            query.where(new Condition(Condition.Operator.EqualTo).compare('id', id));
+        query.where(new Condition(Condition.Operator.EqualTo).compare('id', id));
         if (option.fields) query.select(...option.fields);
         if (option.offset || option.page) query.fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit);
         if (option.relations) query.fetchRecordFor(...option.relations);
@@ -135,7 +136,7 @@ export class MySQL extends Database {
                     }
 
                 }
-                Promise.all(steps)
+                return Promise.all(steps)
                     .then(data=> {
                         this.connection.query(`SELECT * FROM \`${model}\` WHERE id = ${insertResult['insertId']}`, (err, list)=> {
                             if (err) {
@@ -151,7 +152,7 @@ export class MySQL extends Database {
         });
     }
 
-    public insert<T>(model:string, value:Array<T>):Promise < IUpsertResult <T>> {
+    public insertAll<T>(model:string, value:Array<T>):Promise < IUpsertResult <T>> {
         var result:IUpsertResult<T> = <IUpsertResult<T>>{};
         var fields = this.schemaList[model].getFields();
         var fieldsName = [];
@@ -533,7 +534,7 @@ export class MySQL extends Database {
     private createTable(schema:Schema) {
         var fields = schema.getFields();
         var createDefinition = this.createDefinition(fields, schema.name);
-        var ownTable = `CREATE TABLE IF NOT EXISTS ${schema.name} (\n${createDefinition.ownColumn})\n ENGINE=InnoDB DEFAULT CHARSET=utf8`;
+        var ownTable = `DROP TABLE ${schema.name};CREATE TABLE ${schema.name} (\n${createDefinition.ownColumn})\n ENGINE=InnoDB DEFAULT CHARSET=utf8`;
         var ownTablePromise = new Promise((resolve, reject)=> {
             this.connection.query(ownTable, (err, result)=> {
                 if (err) {
@@ -546,7 +547,7 @@ export class MySQL extends Database {
             if (!createDefinition.lingualColumn) {
                 return resolve(true);
             }
-            var translateTable = `CREATE TABLE IF NOT EXISTS ${schema.name}_translation (\n${createDefinition.lingualColumn}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8`;
+            var translateTable = `DROP TABLE ${schema.name}_translation;CREATE TABLE ${schema.name}_translation (\n${createDefinition.lingualColumn}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8`;
             this.connection.query(translateTable, (err, result)=> {
                 if (err) {
                     return reject()
@@ -728,9 +729,19 @@ export class MySQL extends Database {
         var fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation
             && fields[relation].properties.relation.type != Relationship.Type.Many2Many) {
-            if (+value > 0) {
+            var readIdPromise = Promise.reject(new Err(Err.Code.DBUpdate));
+            if (fields[relation].properties.relation.isWeek && typeof value == 'object' && !value['id']) {
+                var relatedObject = new fields[relation].properties.relation.model(value);
+                readIdPromise = relatedObject.insert().then(result=> {
+                    return result.items[0]['id'];
+                })
+            } else if (+value > 0) {
+                var id = +value ? +value : +value['id'];
+                readIdPromise = Promise.resolve(id);
+            }
+            return readIdPromise.then(id=> {
                 return new Promise((resolve, reject)=> {
-                    this.connection.query(`UPDATE \`${modelName}\` SET \`${relation}\` = '${value}' WHERE id='${model['id']}' `, (err, updateResult)=> {
+                    this.connection.query(`UPDATE \`${modelName}\` SET \`${relation}\` = '${id}' WHERE id='${model['id']}' `, (err, updateResult)=> {
                         if (err) {
                             return reject(new Err(Err.Code.DBUpdate));
                         }
@@ -738,14 +749,14 @@ export class MySQL extends Database {
                         resolve(result);
                     })
                 })
-            } else if (fields[relation].properties.relation.isWeek) {
-                return this.insertOne(fields[relation].properties.relation.model.schema.name, value);
-            }
+            })
+
         }
     }
 
-    private addManyToManyRelation<T,M>(model:T, relation:string, value:number|Array<number>|M|Array<M>):Promise<IUpsertResult<M>> {
-        var result:IUpsertResult<T> = <IUpsertResult<T>>{};
+
+    private addManyToManyRelation<T,M>(model:T, relation:string, value:number | Array < number > | M | Array < M >):Promise < IUpsertResult < M >> {
+        var result:IUpsertResult < T > = <IUpsertResult<T>>{};
         var modelName = model.constructor['schema'].name;
         var fields = this.schemaList[modelName].getFields();
         var relatedModelName = fields[relation].properties.relation.model.schema.name;
@@ -754,17 +765,20 @@ export class MySQL extends Database {
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation
             && fields[relation].properties.relation.type == Relationship.Type.Many2Many) {
             if (+value > 0) {
-                relationIds.push(value);
+                relationIds.push(+value);
             } else if (value instanceof Array) {
                 for (var i = value['length']; i--;) {
                     if (+value[i]) {
                         relationIds.push(+value[i])
-                    } else if (typeof value[i] == 'object' && fields[relation].properties.relation.isWeek) {
-                        newRelation.push(value[i])
+                    } else if (typeof value[i] == 'object') {
+                        if (+value[i]['id'])relationIds.push(+value[i]['id']);
+                        else if (fields[relation].properties.relation.isWeek) newRelation.push(value[i])
                     }
                 }
-            } else if (typeof value == 'object' && fields[relation].properties.relation.isWeek) {
-                newRelation.push(value)
+            } else if (typeof value == 'object') {
+                if (+value['id']) {
+                    relationIds.push(+value['id'])
+                } else if (fields[relation].properties.relation.isWeek) newRelation.push(value)
             }
         } else {
             return Promise.reject(new Err(Err.Code.DBInsert));
@@ -772,9 +786,9 @@ export class MySQL extends Database {
         return new Promise<Array<number>>(
             (resolve, reject)=> {
                 if (!newRelation.length) {
-                    resolve(relationIds);
+                    return resolve(relationIds);
                 }
-                this.insert(relatedModelName, newRelation)
+                this.insertAll(relatedModelName, newRelation)
                     .then(result=> {
                         for (var i = result.items.length; i--;) {
                             relationIds.push(result.items[i].id);
