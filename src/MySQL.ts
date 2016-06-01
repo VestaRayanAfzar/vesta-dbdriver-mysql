@@ -7,7 +7,7 @@ import {DatabaseError} from "vesta-schema/error/DatabaseError";
 import {IDeleteResult, IUpsertResult, IQueryResult} from "vesta-schema/ICRUDResult";
 import {Condition, Vql} from "vesta-schema/Vql";
 import {FieldType, Relationship, Field, IFieldProperties} from "vesta-schema/Field";
-import {IModelFields} from "vesta-schema/Model";
+import {IModelFields, Model} from "vesta-schema/Model";
 
 interface ICalculatedQueryOptions {
     limit:string,
@@ -72,6 +72,7 @@ export class MySQL extends Database {
         if (option.fields) query.select(...option.fields);
         if (option.relations) query.fetchRecordFor(...option.relations);
         query.orderBy = option.orderBy || [];
+        query.limitTo(1);
         return this.findByQuery(query);
     }
 
@@ -86,7 +87,7 @@ export class MySQL extends Database {
         if (option.fields) query.select(...option.fields);
         if (option.offset || option.page) query.fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit);
         if (option.relations) query.fetchRecordFor(...option.relations);
-        if (option.limit || query.limit === 0) query.limitTo(option.limit);
+        if (+option.limit) query.limitTo(option.limit);
         query.where(condition);
         query.orderBy = option.orderBy || [];
         return this.findByQuery(query);
@@ -95,9 +96,13 @@ export class MySQL extends Database {
     public findByQuery<T>(query:Vql):Promise < IQueryResult <T>> {
         var params:ICalculatedQueryOptions = this.getQueryParams(query);
         var result:IQueryResult<T> = <IQueryResult<T>>{};
-        return this.query(`SELECT ${params.fields} FROM \`${query.model}\` ${params.condition} ${params.orderBy} ${params.limit}`)
-            .then(list=> {
-                return this.getManyToManyRelation(<Array<T>>list, query)
+        var totalPromise = this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.condition}`);
+        var itemsPromise = this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.condition} ${params.orderBy} ${params.limit}`);
+        return Promise.all([totalPromise,itemsPromise])
+            .then(data=> {
+                var list = data[1];
+                result.total = data[0]['total'];
+                return this.getManyToManyRelation(list, query)
                     .then(list=> {
                         result.items = this.normalizeList(this.schemaList[query.model], list);
                         return result;
@@ -193,8 +198,7 @@ export class MySQL extends Database {
         } else {
             safeCondition = <Condition>condition;
         }
-        var modelName = model.constructor['schema'].name;
-        var fields = this.schemaList[modelName].getFields();
+        var fields = this.schemaList[model].getFields();
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation) {
             if (fields[relation].properties.relation.type != Relationship.Type.Many2Many) {
                 return this.removeOneToManyRelation(model, relation, safeCondition)
@@ -205,23 +209,43 @@ export class MySQL extends Database {
         return Promise.reject(new Err(Err.Code.DBDelete));
     }
 
+    private updateRelations(model:Model, relation, relatedValues) {
+        var modelName = model.constructor['schema'].name;
+        var ids = [0];
+        if (relatedValues instanceof Array) {
+            for (var i = relatedValues.length; i--;) {
+                ids.push(typeof relatedValues[i] == 'object' ? relatedValues[i].id : relatedValues[i]);
+            }
+        }
+        return this.query(`DELETE FROM ${this.pascalCase(modelName)}Has${this.pascalCase(relation)} 
+                    WHERE ${this.camelCase(modelName)} = ${model['id']}`)
+            .then(()=> {
+                return this.addRelation(model, relation, ids)
+            })
+    }
+
     public updateOne<T>(model:string, value:T):Promise < IUpsertResult <T>> {
-        var properties = [];
         var result:IUpsertResult<T> = <IUpsertResult<T>>{};
-        for (var key in value) {
-            if (value.hasOwnProperty(key) && this.schemaList[model].getFieldsNames().indexOf(key) >= 0 && key != 'id') {
-                properties.push(`\`${model}\`.${key} = '${value[key]}'`)
+        var analysedValue = this.getAnalysedValue<T>(model, value);
+        var properties = [];
+        for (var i = analysedValue.properties.length; i--;) {
+            properties.push(`\`${analysedValue.properties[i].field}\` = ${analysedValue.properties[i].value}`);
+        }
+        var id = value['id'];
+        var steps = [];
+        for (var relation in analysedValue.relations) {
+            if (analysedValue.relations.hasOwnProperty(relation)) {
+                if (this.schemaList[model].getFields()[relation].properties.relation.type != Relationship.Type.Many2Many) {
+                    properties.push(`\`${relation}\` = ${this.escape(analysedValue.relations[relation])}`);
+                } else {
+                    steps.push(this.updateRelations(new this.models[model](value), relation, analysedValue.relations[relation]));
+                }
             }
         }
 
-        return this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE id = ${value['id']}`)
-            .then(updateResult=> {
-                return this.query<Array<T>>(`SELECT * FROM \`${model}\` WHERE id = ${value['id']}`)
-            })
-            .then(list=> {
-                result.items = list;
-                return result;
-            })
+        return Promise.all(steps)
+            .then(()=>this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE id = ${value['id']}`))
+            .then(()=>this.findById(model, value['id']))
             .catch(err=> {
                 result.error = new Err(Err.Code.DBQuery, err.message);
                 return Promise.reject(result);
@@ -333,8 +357,8 @@ export class MySQL extends Database {
         var params:ICalculatedQueryOptions = <ICalculatedQueryOptions>{};
         query.offset = query.offset ? query.offset : (query.page ? query.page - 1 : 0 ) * query.limit;
         params.limit = '';
-        if (query.limit !== 0) {
-            params.limit = `LIMIT ${query.offset ? +query.offset : 0 }, ${query.limit ?  +query.limit : 50 } `;
+        if (+query.limit) {
+            params.limit = `LIMIT ${query.offset ? +query.offset : 0 }, ${+query.limit} `;
         }
         params.orderBy = '';
         if (query.orderBy.length) {
@@ -763,12 +787,12 @@ export class MySQL extends Database {
                 }
                 return this.query<any>(`INSERT INTO ${modelName}Has${this.pascalCase(relation)} 
                     (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(',')}`)
-                    .then(insertResult=>{
+                    .then(insertResult=> {
                         result.items = insertResult;
                         return result
                     })
-                    .catch(err=>{
-                        return Promise.reject(new Err(Err.Code.DBInsert,err.message));
+                    .catch(err=> {
+                        return Promise.reject(new Err(Err.Code.DBInsert, err.message));
                     })
             });
 
@@ -799,12 +823,12 @@ export class MySQL extends Database {
                     })
             });
         return this.query<any>(`UPDATE \`${model}\` SET ${relation} = 0 WHERE ${paredCondition}`)
-            .then(updateResult=>{
+            .then(updateResult=> {
                 result.items = updateResult;
                 return result;
             })
-            .catch(err=>{
-                return Promise.reject(new Err(Err.Code.DBUpdate,err.message))
+            .catch(err=> {
+                return Promise.reject(new Err(Err.Code.DBUpdate, err.message))
             })
     }
 
