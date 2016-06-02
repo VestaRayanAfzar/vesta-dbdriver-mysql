@@ -98,9 +98,9 @@ export class MySQL extends Database {
         var result:IQueryResult<T> = <IQueryResult<T>>{};
         var totalPromise = this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.condition}`);
         var itemsPromise = this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.condition} ${params.orderBy} ${params.limit}`);
-        return Promise.all([totalPromise,itemsPromise])
+        return Promise.all([totalPromise, itemsPromise])
             .then(data=> {
-                var list = data[1];
+                var list = <T[]>data[1];
                 result.total = data[0]['total'];
                 return this.getManyToManyRelation(list, query)
                     .then(list=> {
@@ -229,7 +229,9 @@ export class MySQL extends Database {
         var analysedValue = this.getAnalysedValue<T>(model, value);
         var properties = [];
         for (var i = analysedValue.properties.length; i--;) {
-            properties.push(`\`${analysedValue.properties[i].field}\` = ${analysedValue.properties[i].value}`);
+            if(analysedValue.properties[i].field != 'id') {
+                properties.push(`\`${analysedValue.properties[i].field}\` = ${analysedValue.properties[i].value}`);
+            }
         }
         var id = value['id'];
         var steps = [];
@@ -441,7 +443,7 @@ export class MySQL extends Database {
             var fields = '*';
             if (typeof query.relations[i] != 'string') {
                 for (var j = query.relations[i]['fields'].length; j--;) {
-                    query.relations[i]['fields'][j] = `\`${query.relations[i]['fields'][j]}\``;
+                    query.relations[i]['fields'][j] = `m.${query.relations[i]['fields'][j]}`;
                 }
                 fields = query.relations[i]['fields'].join(',');
             }
@@ -863,6 +865,8 @@ export class MySQL extends Database {
     }
 
     public escape(value) {
+        if (typeof value == 'number') return value;
+        if (typeof value == 'boolean') return value ? 1 : 0;
         return this.connection.escape(value);
     }
 
