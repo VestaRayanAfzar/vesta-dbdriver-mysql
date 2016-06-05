@@ -14,6 +14,7 @@ interface ICalculatedQueryOptions {
     orderBy:string,
     fields:string,
     condition:string,
+    join:string,
 }
 
 export class MySQL extends Database {
@@ -96,8 +97,10 @@ export class MySQL extends Database {
     public findByQuery<T>(query:Vql):Promise < IQueryResult <T>> {
         var params:ICalculatedQueryOptions = this.getQueryParams(query);
         var result:IQueryResult<T> = <IQueryResult<T>>{};
-        var totalPromise = this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.condition}`);
-        var itemsPromise = this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.condition} ${params.orderBy} ${params.limit}`);
+        params.condition = params.condition ? 'WHERE '+params.condition : '';
+        params.orderBy = params.orderBy ? 'ORDER BY '+params.orderBy : '';
+        var totalPromise = this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.join} ${params.condition}`);
+        var itemsPromise = this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.join} ${params.condition} ${params.orderBy} ${params.limit}`);
         return Promise.all([totalPromise, itemsPromise])
             .then(data=> {
                 var list = <T[]>data[1];
@@ -229,7 +232,7 @@ export class MySQL extends Database {
         var analysedValue = this.getAnalysedValue<T>(model, value);
         var properties = [];
         for (var i = analysedValue.properties.length; i--;) {
-            if(analysedValue.properties[i].field != 'id') {
+            if (analysedValue.properties[i].field != 'id') {
                 properties.push(`\`${analysedValue.properties[i].field}\` = ${analysedValue.properties[i].value}`);
             }
         }
@@ -368,7 +371,7 @@ export class MySQL extends Database {
             for (var i = 0; i < query.orderBy.length; i--) {
                 orderArray.push(`\`${query.model}\`.${query.orderBy[i].field} ${query.orderBy[i].ascending ? 'ASC' : 'DESC'}`);
             }
-            params.orderBy = `ORDER BY ${orderArray.join(',')}`;
+            params.orderBy = orderArray.join(',');
         }
         var fields:Array<string> = [];
         var modelFields = this.schemaList[query.model].getFields();
@@ -413,12 +416,51 @@ export class MySQL extends Database {
                 }
             }
         }
-        params.fields = fields.join(',');
         params.condition = '';
         if (query.condition) {
             params.condition = this.getCondition(query.condition);
-            params.condition = params.condition ? `WHERE ${params.condition}` : '';
+            params.condition = params.condition ? params.condition : '';
         }
+        params.join = '';
+        if (query.joins && query.joins.length) {
+            var joins = [];
+            for (var i = 0; i < query.joins.length; i++) {
+                var join = query.joins[i];
+                var type = '';
+                switch (join.type) {
+                    case Vql.Join :
+                        type = 'JOIN';
+                        break;
+                    case Vql.LeftJoin :
+                        type = 'LEFT JOIN';
+                        break;
+                    case Vql.RightJoin :
+                        type = 'RIGHT JOIN';
+                        break;
+                    case Vql.InnerJoin :
+                        type = 'INNER JOIN';
+                        break;
+                    default :
+                        type = 'LEFT JOIN';
+                }
+                joins.push(`${type} ON (${query.model}.${join.field} == ${join.vql.model}.id`);
+                var joinParam = this.getQueryParams(join.vql);
+                if (joinParam.fields) {
+                    fields.push(joinParam.fields);
+                }
+                if (joinParam.condition) {
+                    params.condition = params.condition ? `(${params.condition} AND ${joinParam.condition})` : joinParam.condition
+                }
+                if (joinParam.orderBy) {
+                    params.orderBy = params.orderBy ? `,${joinParam.orderBy}` : joinParam.orderBy;
+                }
+                if(joinParam.join){
+                    joins.push(joinParam.join)
+                }
+            }
+            params.join = joins.join('\n');
+        }
+        params.fields = fields.join(',');
         return params;
     }
 
