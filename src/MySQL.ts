@@ -23,6 +23,7 @@ export class MySQL extends Database {
     private schemaList:ISchemaList = {};
     private config:IDatabaseConfig;
     private models:IModelCollection;
+    private primaryKeys:{[name:string]:string};
 
     public connect():Promise<Database> {
         if (this.connection) return Promise.resolve(this);
@@ -46,15 +47,33 @@ export class MySQL extends Database {
 
     constructor(config:IDatabaseConfig, models:IModelCollection) {
         super();
-        var schemaList:ISchemaList = {};
+        this.schemaList = {};
         for (var model in models) {
             if (models.hasOwnProperty(model)) {
-                schemaList[model] = models[model].schema;
+                this.schemaList[model] = models[model].schema;
+                this.pk(model)
             }
         }
-        this.schemaList = schemaList;
         this.models = models;
         this.config = config;
+    }
+
+    private pk(modelName):string {
+        if(this.primaryKeys[modelName]){
+            return this.primaryKeys[modelName]
+        }else {
+            var fields = this.schemaList[modelName].getFields();
+            for (var field in fields) {
+                if (fields.hasOwnProperty(field)) {
+                    if (fields[field].properties.primary) {
+                        this.primaryKeys[modelName] = field;
+                        return field;
+                    }
+                }
+            }
+        }
+        this.primaryKeys[modelName] = 'id';
+        return 'id';
     }
 
     public init():Promise<boolean> {
@@ -69,7 +88,7 @@ export class MySQL extends Database {
 
     public findById<T>(model:string, id:number | string, option:IQueryOption = {}):Promise <IQueryResult<T>> {
         var query = new Vql(model);
-        query.where(new Condition(Condition.Operator.EqualTo).compare('id', id));
+        query.where(new Condition(Condition.Operator.EqualTo).compare(this.pk(model), id));
         if (option.fields) query.select(...option.fields);
         if (option.relations) query.fetchRecordFor(...option.relations);
         query.orderBy = option.orderBy || [];
@@ -97,14 +116,14 @@ export class MySQL extends Database {
     public findByQuery<T>(query:Vql):Promise < IQueryResult <T>> {
         var params:ICalculatedQueryOptions = this.getQueryParams(query);
         var result:IQueryResult<T> = <IQueryResult<T>>{};
-        params.condition = params.condition ? 'WHERE '+params.condition : '';
-        params.orderBy = params.orderBy ? 'ORDER BY '+params.orderBy : '';
+        params.condition = params.condition ? 'WHERE ' + params.condition : '';
+        params.orderBy = params.orderBy ? 'ORDER BY ' + params.orderBy : '';
         var totalPromise = this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.join} ${params.condition}`);
         var itemsPromise = this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.join} ${params.condition} ${params.orderBy} ${params.limit}`);
         return Promise.all([totalPromise, itemsPromise])
             .then(data=> {
                 var list = <T[]>data[1];
-                result.total = data[0]['total'];
+                result.total = data[0][0]['total'];
                 return this.getManyToManyRelation(list, query)
                     .then(list=> {
                         result.items = this.normalizeList(this.schemaList[query.model], list);
@@ -137,7 +156,7 @@ export class MySQL extends Database {
 
                 }
                 var id = insertResult['insertId'];
-                return Promise.all(steps).then(()=>this.query(`SELECT * FROM \`${model}\` WHERE id = ${id}`));
+                return Promise.all(steps).then(()=>this.query(`SELECT * FROM \`${model}\` WHERE ${this.pk(model)} = ${id}`));
             })
             .then(list=> {
                 result.items = <Array<T>>list;
@@ -195,14 +214,15 @@ export class MySQL extends Database {
 
     public removeRelation<T>(model:T, relation:string, condition?:Condition|number|Array<number>):Promise<any> {
         var modelName = model.constructor['schema'].name;
+        var relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         var safeCondition:Condition;
         if (typeof condition == 'number') {
             safeCondition = new Condition(Condition.Operator.EqualTo);
-            safeCondition.compare('id', condition);
+            safeCondition.compare(this.pk(relatedModelName), condition);
         } else if (condition instanceof Array && condition.length) {
             safeCondition = new Condition(Condition.Operator.Or);
             for (var i = condition.length; i--;) {
-                safeCondition.append((new Condition(Condition.Operator.EqualTo)).compare('id', condition[i]))
+                safeCondition.append((new Condition(Condition.Operator.EqualTo)).compare(this.pk(relatedModelName), condition[i]))
             }
         } else if (condition instanceof Condition) {
             safeCondition = <Condition>condition;
@@ -220,14 +240,15 @@ export class MySQL extends Database {
 
     private updateRelations(model:Model, relation, relatedValues) {
         var modelName = model.constructor['schema'].name;
+        var relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         var ids = [0];
         if (relatedValues instanceof Array) {
             for (var i = relatedValues.length; i--;) {
-                ids.push(typeof relatedValues[i] == 'object' ? relatedValues[i].id : relatedValues[i]);
+                ids.push(typeof relatedValues[i] == 'object' ? relatedValues[i][this.pk(relatedModelName)] : relatedValues[i]);
             }
         }
         return this.query(`DELETE FROM ${this.pascalCase(modelName)}Has${this.pascalCase(relation)} 
-                    WHERE ${this.camelCase(modelName)} = ${model['id']}`)
+                    WHERE ${this.camelCase(modelName)} = ${model[this.pk(modelName)]}`)
             .then(()=> {
                 return this.addRelation(model, relation, ids)
             })
@@ -238,11 +259,11 @@ export class MySQL extends Database {
         var analysedValue = this.getAnalysedValue<T>(model, value);
         var properties = [];
         for (var i = analysedValue.properties.length; i--;) {
-            if (analysedValue.properties[i].field != 'id') {
+            if (analysedValue.properties[i].field != this.pk(model)) {
                 properties.push(`\`${analysedValue.properties[i].field}\` = ${analysedValue.properties[i].value}`);
             }
         }
-        var id = value['id'];
+        var id = value[this.pk(model)];
         var steps = [];
         for (var relation in analysedValue.relations) {
             if (analysedValue.relations.hasOwnProperty(relation)) {
@@ -255,8 +276,8 @@ export class MySQL extends Database {
         }
 
         return Promise.all(steps)
-            .then(()=>this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE id = ${value['id']}`))
-            .then(()=>this.findById(model, value['id']))
+            .then(()=>this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ${id}`))
+            .then(()=>this.findById(model, id))
             .catch(err=> {
                 result.error = new Err(Err.Code.DBQuery, err.message);
                 return Promise.reject(result);
@@ -265,24 +286,24 @@ export class MySQL extends Database {
     }
 
     public updateAll<T>(model:string, newValues:T, condition:Condition):Promise < IUpsertResult < T >> {
-        var sqlCondition = this.getCondition(condition);
+        var sqlCondition = this.getCondition(model, condition);
         var result:IUpsertResult<T> = <IUpsertResult<T>>{};
         var properties = [];
         for (var key in newValues) {
-            if (newValues.hasOwnProperty(key) && this.schemaList[model].getFieldsNames().indexOf(key) >= 0 && key != 'id') {
+            if (newValues.hasOwnProperty(key) && this.schemaList[model].getFieldsNames().indexOf(key) >= 0 && key != this.pk(model)) {
                 properties.push(`\`${model}\`.${key} = '${newValues[key]}'`)
             }
         }
-        return this.query<Array<T>>(`SELECT id FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`)
+        return this.query<Array<T>>(`SELECT ${this.pk(model)} FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`)
             .then(list=> {
                 var ids = [];
                 for (var i = list.length; i--;) {
-                    ids.push(list[i]['id']);
+                    ids.push(list[i][this.pk(model)]);
                 }
                 if (!ids.length) return [];
-                return this.query<any>(`UPDATE \`${model}\` SET ${properties.join(',')}  WHERE id IN (${ids.join(',')})}`)
+                return this.query<any>(`UPDATE \`${model}\` SET ${properties.join(',')}  WHERE ${this.pk(model)} IN (${ids.join(',')})}`)
                     .then(updateResult=> {
-                        return this.query<Array<T>>(`SELECT * FROM \`${model}\` WHERE id IN (${ids.join(',')})`)
+                        return this.query<Array<T>>(`SELECT * FROM \`${model}\` WHERE ${this.pk(model)} IN (${ids.join(',')})`)
                     })
             })
             .then(list=> {
@@ -298,7 +319,7 @@ export class MySQL extends Database {
     public deleteOne(model:string, id:number | string):Promise < IDeleteResult > {
         var result:IDeleteResult = <IDeleteResult>{};
         var fields = this.schemaList[model].getFields();
-        return this.query(`DELETE FROM \`${model}\` WHERE id = ${id}`)
+        return this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} = ${id}`)
             .then(deleteResult=> {
                 for (var field in this.schemaList[model].getFields()) {
                     if (fields.hasOwnProperty(field) && fields[field].properties.type == FieldType.Relation) {
@@ -315,16 +336,16 @@ export class MySQL extends Database {
     }
 
     public deleteAll<T>(model:string, condition:Condition):Promise < IDeleteResult > {
-        var sqlCondition = this.getCondition(condition);
+        var sqlCondition = this.getCondition(model, condition);
         var result:IDeleteResult = <IDeleteResult>{};
-        return this.query<Array<T>>(`SELECT id FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`)
+        return this.query<Array<T>>(`SELECT ${this.pk(model)} FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`)
             .then(list=> {
                 var ids = [];
                 for (var i = list.length; i--;) {
-                    ids.push(list[i]['id']);
+                    ids.push(list[i][this.pk(model)]);
                 }
                 if (!ids.length) return [];
-                return this.query(`DELETE FROM \`${model}\` WHERE id IN (${ids.join(',')})`)
+                return this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} IN (${ids.join(',')})`)
                     .then(deleteResult=> {
                         return ids;
                     })
@@ -415,13 +436,14 @@ export class MySQL extends Database {
                             }
                         }
                     }
-                    modelFiledList.length && fields.push(`(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM ${properties.relation.model.schema.name} WHERE \`${relatedModelName}\`.id = ${query.model}.${field.fieldName}  LIMIT 1) as ${field.fieldName}`)
+                    var name = properties.relation.model.schema.name;
+                    modelFiledList.length && fields.push(`(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM ${name} WHERE \`${relatedModelName}\`.${this.pk(name)} = ${query.model}.${field.fieldName}  LIMIT 1) as ${field.fieldName}`)
                 }
             }
         }
         params.condition = '';
         if (query.condition) {
-            params.condition = this.getCondition(query.condition);
+            params.condition = this.getCondition(query.model, query.condition);
             params.condition = params.condition ? params.condition : '';
         }
         params.join = '';
@@ -446,7 +468,7 @@ export class MySQL extends Database {
                     default :
                         type = 'LEFT JOIN';
                 }
-                joins.push(`${type} ON (${query.model}.${join.field} == ${join.vql.model}.id`);
+                joins.push(`${type} ${join.vql.model} ON (${query.model}.${join.field} = ${join.vql.model}.${this.pk(join.vql.model)})`);
                 var joinParam = this.getQueryParams(join.vql);
                 if (joinParam.fields) {
                     fields.push(joinParam.fields);
@@ -457,7 +479,7 @@ export class MySQL extends Database {
                 if (joinParam.orderBy) {
                     params.orderBy = params.orderBy ? `,${joinParam.orderBy}` : joinParam.orderBy;
                 }
-                if(joinParam.join){
+                if (joinParam.join) {
                     joins.push(joinParam.join)
                 }
             }
@@ -467,16 +489,16 @@ export class MySQL extends Database {
         return params;
     }
 
-    private getCondition(condition:Condition) {
+    private getCondition(model:string, condition:Condition) {
         var operator = this.getOperatorSymbol(condition.operator);
         if (!condition.isConnector) {
-            return `(${condition.comparison.field} ${operator} ${condition.comparison.isValueOfTypeField ? condition.comparison.value : `${this.escape(condition.comparison.value)}`})`;
+            return `(\`${model}\`.${condition.comparison.field} ${operator} ${condition.comparison.isValueOfTypeField ? `\`${model}\`.${condition.comparison.value}` : `${this.escape(condition.comparison.value)}`})`;
         } else {
             var childrenCondition = [];
             for (var i = 0; i < condition.children.length; i++) {
-                childrenCondition.push(this.getCondition(condition.children[i]));
+                childrenCondition.push(this.getCondition(model, condition.children[i]));
             }
-            return `(${childrenCondition.join(` ${operator} `)})`;
+            return childrenCondition.length ? `(${childrenCondition.join(` ${operator} `)})` : '';
         }
     }
 
@@ -496,7 +518,7 @@ export class MySQL extends Database {
             var rightKey = this.camelCase(relationship.model.schema.name);
             return this.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
                 LEFT JOIN \`${query.model + 'Has' + this.pascalCase(relationName)}\` r 
-                ON (m.id = r.${rightKey}) 
+                ON (m.${this.pk(relationship.model.schema.name)} = r.${rightKey}) 
                 WHERE r.${leftKey} IN (${ids.join(',')})`)
                 .then(relatedList=> {
                     var result = {};
@@ -507,7 +529,7 @@ export class MySQL extends Database {
 
         };
         for (var i = list.length; i--;) {
-            ids.push(list[i]['id']);
+            ids.push(list[i][this.pk(query.model)]);
         }
         var relations:Array<Promise<any>> = [];
         if (ids.length && query.relations && query.relations.length) {
@@ -528,12 +550,12 @@ export class MySQL extends Database {
                     for (var related in data[i]) {
                         if (data[i].hasOwnProperty(related)) {
                             for (var k = list.length; k--;) {
-                                var id = list[k]['id'];
+                                var id = list[k][this.pk(query.model)];
                                 list[k][related] = [];
                                 for (var j = data[i][related].length; j--;) {
                                     if (id == data[i][related][j][this.camelCase(query.model)]) {
                                         var relatedData = data[i][related][j];
-                                        relatedData['id'] = relatedData[rightKey];
+                                        relatedData[this.pk(relationship.model.schema.name)] = relatedData[rightKey];
                                         delete relatedData[rightKey];
                                         delete relatedData[leftKey];
                                         list[k][related].push(relatedData);
@@ -755,20 +777,21 @@ export class MySQL extends Database {
         var result:IUpsertResult<T> = <IUpsertResult<T>>{};
         var modelName = model.constructor['schema'].name;
         var fields = this.schemaList[modelName].getFields();
+        var relatedModelName = fields[relation].properties.relation.model.schema.name;
         var readIdPromise = Promise.reject(new Err(Err.Code.DBUpdate));
-        if (fields[relation].properties.relation.isWeek && typeof value == 'object' && !value['id']) {
+        if (fields[relation].properties.relation.isWeek && typeof value == 'object' && !value[this.pk(relatedModelName)]) {
             var relatedObject = new fields[relation].properties.relation.model(value);
             readIdPromise = relatedObject.insert().then(result=> {
-                return result.items[0]['id'];
+                return result.items[0][this.pk(relatedModelName)];
             })
         } else {
-            var id = +value ? +value : +value['id'];
+            var id = +value ? +value : +value[this.pk(relatedModelName)];
             if (!id || id <= 0) return Promise.reject(new Error('invalid related model id'));
             readIdPromise = Promise.resolve(id);
         }
         return readIdPromise
             .then(id=> {
-                return this.query<Array<T>>(`UPDATE \`${modelName}\` SET \`${relation}\` = '${id}' WHERE id='${model['id']}' `)
+                return this.query<Array<T>>(`UPDATE \`${modelName}\` SET \`${relation}\` = '${id}' WHERE ${this.pk(relatedModelName)}='${model[this.pk(relatedModelName)]}' `)
             })
             .then(updateResult=> {
                 result.items = updateResult;
@@ -795,13 +818,13 @@ export class MySQL extends Database {
                 if (+value[i]) {
                     relationIds.push(+value[i])
                 } else if (typeof value[i] == 'object') {
-                    if (+value[i]['id'])relationIds.push(+value[i]['id']);
+                    if (+value[i][this.pk(relatedModelName)])relationIds.push(+value[i][this.pk(relatedModelName)]);
                     else if (fields[relation].properties.relation.isWeek) newRelation.push(value[i])
                 }
             }
         } else if (typeof value == 'object') {
-            if (+value['id']) {
-                relationIds.push(+value['id'])
+            if (+value[this.pk(relatedModelName)]) {
+                relationIds.push(+value[this.pk(relatedModelName)])
             } else if (fields[relation].properties.relation.isWeek) newRelation.push(value)
         }
         return Promise.resolve()
@@ -812,7 +835,7 @@ export class MySQL extends Database {
                 return this.insertAll(relatedModelName, newRelation)
                     .then(result=> {
                         for (var i = result.items.length; i--;) {
-                            relationIds.push(result.items[i].id);
+                            relationIds.push(result.items[i][this.pk(relatedModelName)]);
                         }
                         return relationIds;
                     })
@@ -821,7 +844,7 @@ export class MySQL extends Database {
             .then(relationIds=> {
                 var insertList = [];
                 for (var i = relationIds.length; i--;) {
-                    insertList.push(`(${model['id']},${relationIds[i]})`);
+                    insertList.push(`(${model[this.pk(modelName)]},${relationIds[i]})`);
                 }
                 return this.query<any>(`INSERT INTO ${modelName}Has${this.pascalCase(relation)}
                     (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(',')}`)
@@ -844,14 +867,14 @@ export class MySQL extends Database {
         var isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
         var preparePromise:Promise<number> = Promise.resolve(0);
         if (isWeek) {
-            var readRelationId:Promise<number> = +model[relation] ? Promise.resolve(+model[relation]) : this.findById(modelName, model['id']).then(result=>result.items[0][relation]);
+            var readRelationId:Promise<number> = +model[relation] ? Promise.resolve(+model[relation]) : this.findById(modelName, model[this.pk(modelName)]).then(result=>result.items[0][relation]);
             readRelationId.then(relationId=> {
                 return this.deleteOne(relatedModelName, relationId).then(()=>relationId);
             })
         }
         return preparePromise
             .then(()=> {
-                return this.query<any>(`UPDATE \`${model}\` SET ${relation} = 0 WHERE id = ${this.escape(model['id'])}`)
+                return this.query<any>(`UPDATE \`${model}\` SET ${relation} = 0 WHERE ${this.pk(modelName)} = ${this.escape(model[this.pk(modelName)])}`)
                     .then(updateResult=> {
                         result.items = updateResult;
                         return result;
@@ -871,7 +894,7 @@ export class MySQL extends Database {
         var preparePromise:Promise<any>;
         if (condition) {
             var vql = new Vql(relatedModelName);
-            vql.select('id').where(condition);
+            vql.select(this.pk(relatedModelName)).where(condition);
             preparePromise = this.findByQuery(vql)
         } else {
             preparePromise = Promise.resolve();
@@ -884,14 +907,14 @@ export class MySQL extends Database {
                 var relatedField = this.camelCase(relatedModelName);
                 if (result && result.items.length) {
                     for (var i = result.items.length; i--;) {
-                        result.items.push(+result.items[0]['id']);
-                        conditions.push(`${relatedField} = '${+result.items[0]['id']}'`)
+                        result.items.push(+result.items[0][this.pk(relatedModelName)]);
+                        conditions.push(`${relatedField} = '${+result.items[0][this.pk(relatedModelName)]}'`)
                     }
                 } else if (result) {
                     conditions.push('FALSE');
                 }
                 conditionsStr = conditions.length ? ` AND ${conditions.join(' OR ')}` : '';
-                return this.query<Array<any>>(`SELECT * FROM ${model + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model['id']} ${conditionsStr}`)
+                return this.query<Array<any>>(`SELECT * FROM ${model + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model[this.pk(modelName)]} ${conditionsStr}`)
                     .then(items=> {
                         var ids:Array<number> = [];
                         for (var i = items.length; i--;) {
@@ -906,12 +929,12 @@ export class MySQL extends Database {
                 var condition = new Condition(Condition.Operator.Or);
                 for (var i = ids.length; i--;) {
                     idConditions.push(`${relatedField} = '${+ids[i]}'`);
-                    condition.append(new Condition(Condition.Operator.EqualTo).compare('id',ids[i]));
+                    condition.append(new Condition(Condition.Operator.EqualTo).compare('id', ids[i]));
                 }
                 var idCondition = ids.length ? `(${ids.join(' OR ')})` : 'FALSE';
-                return this.query(`DELETE FROM ${model + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model['id']} AND ${idCondition}}`)
+                return this.query(`DELETE FROM ${model + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model[this.pk(modelName)]} AND ${idCondition}}`)
                     .then(()=> {
-                        var result = {items:ids};
+                        var result = {items: ids};
                         if (isWeek && ids.length) {
                             return this.deleteAll(relatedModelName, condition).then(()=>result);
                         }
