@@ -162,7 +162,7 @@ export class MySQL extends Database {
         for (var i = value.length; i--;) {
             var insertPart = [];
             for (var j = fieldsName.length; j--;) {
-                insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? `'${value[i][fieldsName[j]]}'` : '\'\'');
+                insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? this.escape(value[i][fieldsName[j]]) : '\'\'');
             }
             insertList.push(`(${insertPart.join(',')})`)
 
@@ -193,18 +193,24 @@ export class MySQL extends Database {
         return Promise.reject(new Err(Err.Code.DBInsert));
     }
 
-    public removeRelation<T>(model:string, relation:string, condition:Condition|number) {
+    public removeRelation<T>(model:T, relation:string, condition?:Condition|number|Array<number>):Promise<any> {
+        var modelName = model.constructor['schema'].name;
         var safeCondition:Condition;
         if (typeof condition == 'number') {
             safeCondition = new Condition(Condition.Operator.EqualTo);
             safeCondition.compare('id', condition);
-        } else {
+        } else if (condition instanceof Array && condition.length) {
+            safeCondition = new Condition(Condition.Operator.Or);
+            for (var i = condition.length; i--;) {
+                safeCondition.append((new Condition(Condition.Operator.EqualTo)).compare('id', condition[i]))
+            }
+        } else if (condition instanceof Condition) {
             safeCondition = <Condition>condition;
         }
-        var fields = this.schemaList[model].getFields();
+        var fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation) {
             if (fields[relation].properties.relation.type != Relationship.Type.Many2Many) {
-                return this.removeOneToManyRelation(model, relation, safeCondition)
+                return this.removeOneToManyRelation(model, relation)
             } else {
                 return this.removeManyToManyRelation(model, relation, safeCondition)
             }
@@ -342,9 +348,6 @@ export class MySQL extends Database {
             if (value.hasOwnProperty(key) && schemaFieldsName.indexOf(key) >= 0 && value[key] !== undefined) {
                 if (schemaFields[key].properties.type != FieldType.Relation) {
                     var thisValue:string|number = `${this.escape(value[key])}`;
-                    if (FieldType.Boolean == schemaFields[key].properties.type) {
-                        thisValue = value[key] ? 1 : 0
-                    }
                     properties.push({field: key, value: thisValue})
                 } else {
                     relations[key] = value[key]
@@ -752,31 +755,29 @@ export class MySQL extends Database {
         var result:IUpsertResult<T> = <IUpsertResult<T>>{};
         var modelName = model.constructor['schema'].name;
         var fields = this.schemaList[modelName].getFields();
-        if (fields[relation] && fields[relation].properties.type == FieldType.Relation
-            && fields[relation].properties.relation.type != Relationship.Type.Many2Many) {
-            var readIdPromise = Promise.reject(new Err(Err.Code.DBUpdate));
-            if (fields[relation].properties.relation.isWeek && typeof value == 'object' && !value['id']) {
-                var relatedObject = new fields[relation].properties.relation.model(value);
-                readIdPromise = relatedObject.insert().then(result=> {
-                    return result.items[0]['id'];
-                })
-            } else if (+value > 0) {
-                var id = +value ? +value : +value['id'];
-                readIdPromise = Promise.resolve(id);
-            }
-            return readIdPromise
-                .then(id=> {
-                    return this.query<Array<T>>(`UPDATE \`${modelName}\` SET \`${relation}\` = '${id}' WHERE id='${model['id']}' `)
-                })
-                .then(updateResult=> {
-                    result.items = updateResult;
-                    return result;
-                })
-                .catch(err=> {
-                    return Promise.reject(new Err(Err.Code.DBUpdate, err.message));
-                })
-
+        var readIdPromise = Promise.reject(new Err(Err.Code.DBUpdate));
+        if (fields[relation].properties.relation.isWeek && typeof value == 'object' && !value['id']) {
+            var relatedObject = new fields[relation].properties.relation.model(value);
+            readIdPromise = relatedObject.insert().then(result=> {
+                return result.items[0]['id'];
+            })
+        } else {
+            var id = +value ? +value : +value['id'];
+            if (!id || id <= 0) return Promise.reject(new Error('invalid related model id'));
+            readIdPromise = Promise.resolve(id);
         }
+        return readIdPromise
+            .then(id=> {
+                return this.query<Array<T>>(`UPDATE \`${modelName}\` SET \`${relation}\` = '${id}' WHERE id='${model['id']}' `)
+            })
+            .then(updateResult=> {
+                result.items = updateResult;
+                return result;
+            })
+            .catch(err=> {
+                return Promise.reject(new Err(Err.Code.DBUpdate, err.message));
+            })
+
     }
 
 
@@ -787,123 +788,136 @@ export class MySQL extends Database {
         var relatedModelName = fields[relation].properties.relation.model.schema.name;
         var newRelation = [];
         var relationIds = [];
-        if (fields[relation] && fields[relation].properties.type == FieldType.Relation
-            && fields[relation].properties.relation.type == Relationship.Type.Many2Many) {
-            if (+value > 0) {
-                relationIds.push(+value);
-            } else if (value instanceof Array) {
-                for (var i = value['length']; i--;) {
-                    if (+value[i]) {
-                        relationIds.push(+value[i])
-                    } else if (typeof value[i] == 'object') {
-                        if (+value[i]['id'])relationIds.push(+value[i]['id']);
-                        else if (fields[relation].properties.relation.isWeek) newRelation.push(value[i])
-                    }
+        if (+value > 0) {
+            relationIds.push(+value);
+        } else if (value instanceof Array) {
+            for (var i = value['length']; i--;) {
+                if (+value[i]) {
+                    relationIds.push(+value[i])
+                } else if (typeof value[i] == 'object') {
+                    if (+value[i]['id'])relationIds.push(+value[i]['id']);
+                    else if (fields[relation].properties.relation.isWeek) newRelation.push(value[i])
                 }
-            } else if (typeof value == 'object') {
-                if (+value['id']) {
-                    relationIds.push(+value['id'])
-                } else if (fields[relation].properties.relation.isWeek) newRelation.push(value)
             }
-        } else {
-            return Promise.reject(new Err(Err.Code.DBInsert));
+        } else if (typeof value == 'object') {
+            if (+value['id']) {
+                relationIds.push(+value['id'])
+            } else if (fields[relation].properties.relation.isWeek) newRelation.push(value)
         }
-        return new Promise<Array<number>>(
-            (resolve, reject)=> {
+        return Promise.resolve()
+            .then(()=> {
                 if (!newRelation.length) {
-                    return resolve(relationIds);
+                    return relationIds;
                 }
-                this.insertAll(relatedModelName, newRelation)
+                return this.insertAll(relatedModelName, newRelation)
                     .then(result=> {
                         for (var i = result.items.length; i--;) {
                             relationIds.push(result.items[i].id);
                         }
-                        resolve(relationIds)
+                        return relationIds;
                     })
-                    .catch(()=> {
-                        return reject(new Err(Err.Code.DBInsert));
-                    })
+
             })
             .then(relationIds=> {
                 var insertList = [];
                 for (var i = relationIds.length; i--;) {
                     insertList.push(`(${model['id']},${relationIds[i]})`);
                 }
-                return this.query<any>(`INSERT INTO ${modelName}Has${this.pascalCase(relation)} 
+                return this.query<any>(`INSERT INTO ${modelName}Has${this.pascalCase(relation)}
                     (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(',')}`)
                     .then(insertResult=> {
                         result.items = insertResult;
                         return result
                     })
-                    .catch(err=> {
-                        return Promise.reject(new Err(Err.Code.DBInsert, err.message));
-                    })
+
+            })
+            .catch(err=> {
+                return Promise.reject(new Err(Err.Code.DBInsert, err.message));
             });
 
     }
 
-    private removeOneToManyRelation<T>(model:string, relation:string, condition:Condition) {
-        var paredCondition = this.getCondition(condition);
+    private removeOneToManyRelation<T>(model:T, relation:string) {
+        var modelName = model.constructor['schema'].name;
         var result:IUpsertResult<T> = <IUpsertResult<T>>{};
-        var relatedModelName = this.schemaList[model].getFields()[relation].properties.relation.model.schema.name;
-        var vql = new Vql(model);
-        vql.select('id').where(condition);
-        this.findByQuery(vql)
-            .then(result=> {
-                var deleteVql = new Vql(relatedModelName).select('id').where(new Condition(Condition.Operator.Or));
-                for (var i = result.items.length; i--;) {
-                    deleteVql.condition.append(new Condition(Condition.Operator.EqualTo).compare('id', result.items[i][relation]))
-                }
-                return deleteVql;
+        var relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
+        var isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
+        var preparePromise:Promise<number> = Promise.resolve(0);
+        if (isWeek) {
+            var readRelationId:Promise<number> = +model[relation] ? Promise.resolve(+model[relation]) : this.findById(modelName, model['id']).then(result=>result.items[0][relation]);
+            readRelationId.then(relationId=> {
+                return this.deleteOne(relatedModelName, relationId).then(()=>relationId);
             })
-            .then(deleteVql=> {
-                return this.findByQuery(deleteVql)
-                    .then(result=> {
-                        var condition = new Condition(Condition.Operator.Or);
-                        for (var i = result.items.length; i--;) {
-                            condition.append(new Condition(Condition.Operator.EqualTo).compare('id', result.items[i]['id']))
-                        }
-                        return this.deleteAll(relatedModelName, condition);
+        }
+        return preparePromise
+            .then(()=> {
+                return this.query<any>(`UPDATE \`${model}\` SET ${relation} = 0 WHERE id = ${this.escape(model['id'])}`)
+                    .then(updateResult=> {
+                        result.items = updateResult;
+                        return result;
                     })
-            });
-        return this.query<any>(`UPDATE \`${model}\` SET ${relation} = 0 WHERE ${paredCondition}`)
-            .then(updateResult=> {
-                result.items = updateResult;
-                return result;
+
             })
             .catch(err=> {
                 return Promise.reject(new Err(Err.Code.DBUpdate, err.message))
             })
+
     }
 
-    private removeManyToManyRelation<T>(model:string, relation:string, condition:Condition) {
-        var relatedModelName = this.schemaList[model].getFields()[relation].properties.relation.model.schema.name;
-        var vql = new Vql(model);
-        vql.select('id').where(condition);
-        return this.findByQuery(vql)
-            .then(result=> {
-                var intermediateModel = model + 'Has' + this.pascalCase(relation);
-                var relationCondition = new Condition(Condition.Operator.Or);
-                for (var i = result.items.length; i--;) {
-                    relationCondition.append(new Condition(Condition.Operator.EqualTo).compare(this.camelCase(model), result.items[i]['id']))
-                }
-                if (!this.schemaList[model].getFields()[relation].properties.relation.isWeek) return relationCondition;
-                var relationVql = new Vql(intermediateModel).select(this.camelCase(relatedModelName)).where(relationCondition);
-                return this.findByQuery(relationVql)
-                    .then(relatedResult=> {
-                        var condition = new Condition(Condition.Operator.Or);
-                        for (var i = result.items.length; i--;) {
-                            condition.append(new Condition(Condition.Operator.EqualTo).compare('id', relatedResult.items[i][this.camelCase(relatedModelName)]))
-                        }
-                        this.deleteAll(relatedModelName, condition);
-                        return relationCondition
-                    });
-            })
-            .then(relationCondition=> {
-                var intermediateModel = model + 'Has' + this.pascalCase(relation);
-                return this.deleteAll(intermediateModel, relationCondition)
-            });
+    private removeManyToManyRelation<T>(model:T, relation:string, condition:Condition):Promise<any> {
+        var modelName = model.constructor['schema'].name;
+        var relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
+        var isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
+        var preparePromise:Promise<any>;
+        if (condition) {
+            var vql = new Vql(relatedModelName);
+            vql.select('id').where(condition);
+            preparePromise = this.findByQuery(vql)
+        } else {
+            preparePromise = Promise.resolve();
+        }
 
+        return preparePromise
+            .then(result=> {
+                var conditions = [];
+                var conditionsStr;
+                var relatedField = this.camelCase(relatedModelName);
+                if (result && result.items.length) {
+                    for (var i = result.items.length; i--;) {
+                        result.items.push(+result.items[0]['id']);
+                        conditions.push(`${relatedField} = '${+result.items[0]['id']}'`)
+                    }
+                } else if (result) {
+                    conditions.push('FALSE');
+                }
+                conditionsStr = conditions.length ? ` AND ${conditions.join(' OR ')}` : '';
+                return this.query<Array<any>>(`SELECT * FROM ${model + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model['id']} ${conditionsStr}`)
+                    .then(items=> {
+                        var ids:Array<number> = [];
+                        for (var i = items.length; i--;) {
+                            ids.push(items[i][relatedField])
+                        }
+                        return ids;
+                    })
+            })
+            .then(ids=> {
+                var relatedField = this.camelCase(relatedModelName);
+                var idConditions = [];
+                var condition = new Condition(Condition.Operator.Or);
+                for (var i = ids.length; i--;) {
+                    idConditions.push(`${relatedField} = '${+ids[i]}'`);
+                    condition.append(new Condition(Condition.Operator.EqualTo).compare('id',ids[i]));
+                }
+                var idCondition = ids.length ? `(${ids.join(' OR ')})` : 'FALSE';
+                return this.query(`DELETE FROM ${model + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model['id']} AND ${idCondition}}`)
+                    .then(()=> {
+                        var result = {items:ids};
+                        if (isWeek && ids.length) {
+                            return this.deleteAll(relatedModelName, condition).then(()=>result);
+                        }
+                        return result;
+                    });
+            });
     }
 
     public escape(value) {
