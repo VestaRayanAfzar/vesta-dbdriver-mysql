@@ -23,7 +23,7 @@ export class MySQL extends Database {
     private schemaList:ISchemaList = {};
     private config:IDatabaseConfig;
     private models:IModelCollection;
-    private primaryKeys:{[name:string]:string};
+    private primaryKeys:{[name:string]:string} = {};
 
     public connect():Promise<Database> {
         if (this.connection) return Promise.resolve(this);
@@ -490,6 +490,7 @@ export class MySQL extends Database {
     }
 
     private getCondition(model:string, condition:Condition) {
+        model = condition.model || model;
         var operator = this.getOperatorSymbol(condition.operator);
         if (!condition.isConnector) {
             return `(\`${model}\`.${condition.comparison.field} ${operator} ${condition.comparison.isValueOfTypeField ? `\`${model}\`.${condition.comparison.value}` : `${this.escape(condition.comparison.value)}`})`;
@@ -498,7 +499,8 @@ export class MySQL extends Database {
             for (var i = 0; i < condition.children.length; i++) {
                 childrenCondition.push(this.getCondition(model, condition.children[i]));
             }
-            return childrenCondition.length ? `(${childrenCondition.join(` ${operator} `)})` : '';
+            var childrenConditionStr = childrenCondition.join(` ${operator} `).trim();
+            return childrenConditionStr ? `(${childrenConditionStr})` : '';
         }
     }
 
