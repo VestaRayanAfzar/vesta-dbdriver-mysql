@@ -59,9 +59,9 @@ export class MySQL extends Database {
     }
 
     private pk(modelName):string {
-        if(this.primaryKeys[modelName]){
+        if (this.primaryKeys[modelName]) {
             return this.primaryKeys[modelName]
-        }else {
+        } else {
             var fields = this.schemaList[modelName].getFields();
             for (var field in fields) {
                 if (fields.hasOwnProperty(field)) {
@@ -589,13 +589,22 @@ export class MySQL extends Database {
     }
 
     private parseJson(str) {
-        var search = ['\n', '\b', '\r', '\t', '\v', '\''];
-        var replace = ['\\n', '\\b', '\\r', '\\t', '\\v', "\\'"];
-        for (var i = search.length; i--;) {
-            str = str.replace(search[i], replace[i]);
+        if (typeof str == 'string' && str) {
+            var replace = ['\\n', '\\b', '\\r', '\\t', '\\v', "\\'"];
+            var search = ['\n', '\b', '\r', '\t', '\v', '\''];
+            for (var i = search.length; i--;) {
+                str = str.replace(search[i], replace[i]);
+            }
+            var json;
+            try {
+                json = JSON.parse(str);
+            } catch (e) {
+                json = str;
+            }
+            return json
+        } else {
+            return str;
         }
-        return JSON.parse(str);
-
     }
 
     private createTable(schema:Schema) {
