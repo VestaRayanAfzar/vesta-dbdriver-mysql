@@ -8,5 +8,9 @@
   "files": [
     "typings/tsd.d.ts",
     "src/MySQL.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "package"
   ]
 }
