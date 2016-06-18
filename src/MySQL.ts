@@ -392,7 +392,7 @@ export class MySQL extends Database {
         params.orderBy = '';
         if (query.orderBy.length) {
             var orderArray = [];
-            for (var i = 0; i < query.orderBy.length; i--) {
+            for (var i = 0; i < query.orderBy.length; i++) {
                 orderArray.push(`\`${query.model}\`.${query.orderBy[i].field} ${query.orderBy[i].ascending ? 'ASC' : 'DESC'}`);
             }
             params.orderBy = orderArray.join(',');
@@ -454,7 +454,7 @@ export class MySQL extends Database {
                 var type = '';
                 switch (join.type) {
                     case Vql.Join :
-                        type = 'JOIN';
+                        type = 'FULL OUTER JOIN';
                         break;
                     case Vql.LeftJoin :
                         type = 'LEFT JOIN';
@@ -477,7 +477,7 @@ export class MySQL extends Database {
                     params.condition = params.condition ? `(${params.condition} AND ${joinParam.condition})` : joinParam.condition
                 }
                 if (joinParam.orderBy) {
-                    params.orderBy = params.orderBy ? `,${joinParam.orderBy}` : joinParam.orderBy;
+                    params.orderBy = params.orderBy ? `${params.orderBy},${joinParam.orderBy}` : joinParam.orderBy; 
                 }
                 if (joinParam.join) {
                     joins.push(joinParam.join)
@@ -497,7 +497,8 @@ export class MySQL extends Database {
         } else {
             var childrenCondition = [];
             for (var i = 0; i < condition.children.length; i++) {
-                childrenCondition.push(this.getCondition(model, condition.children[i]));
+                var childCondition = this.getCondition(model, condition.children[i]).trim();
+                childCondition && childrenCondition.push(childCondition);
             }
             var childrenConditionStr = childrenCondition.join(` ${operator} `).trim();
             return childrenConditionStr ? `(${childrenConditionStr})` : '';
@@ -853,6 +854,10 @@ export class MySQL extends Database {
 
             })
             .then(relationIds=> {
+                if (!relationIds || !relationIds.length) {
+                    result.items = [];
+                    return result;
+                }
                 var insertList = [];
                 for (var i = relationIds.length; i--;) {
                     insertList.push(`(${model[this.pk(modelName)]},${relationIds[i]})`);
