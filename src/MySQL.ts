@@ -477,7 +477,7 @@ export class MySQL extends Database {
                     params.condition = params.condition ? `(${params.condition} AND ${joinParam.condition})` : joinParam.condition
                 }
                 if (joinParam.orderBy) {
-                    params.orderBy = params.orderBy ? `${params.orderBy},${joinParam.orderBy}` : joinParam.orderBy; 
+                    params.orderBy = params.orderBy ? `${params.orderBy},${joinParam.orderBy}` : joinParam.orderBy;
                 }
                 if (joinParam.join) {
                     joins.push(joinParam.join)
