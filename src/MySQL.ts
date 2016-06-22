@@ -38,7 +38,7 @@ export class MySQL extends Database {
                 });
             }
             this.pool.getConnection((err, connection)=> {
-                if (err) return reject(new DatabaseError(Err.Code.DBConnection, err.message));
+                if (err) return reject(new DatabaseError(Err.Code.DBConnection, err && err.message));
                 this.connection = connection;
                 resolve(this);
             });
@@ -132,7 +132,7 @@ export class MySQL extends Database {
             })
             .catch(err=> {
                 if (err) {
-                    result.error = new Err(Err.Code.DBQuery);
+                    result.error = new Err(Err.Code.DBQuery, err && err.message);
                     return Promise.reject(result);
                 }
             })
@@ -163,7 +163,7 @@ export class MySQL extends Database {
                 return result;
             })
             .catch(err=> {
-                result.error = new Err(Err.Code.DBInsert, err.message);
+                result.error = new Err(Err.Code.DBInsert, err && err.message);
                 return Promise.reject(result);
             });
     }
@@ -193,7 +193,7 @@ export class MySQL extends Database {
                 return result;
             })
             .catch(err=> {
-                result.error = new Err(Err.Code.DBInsert, err.message);
+                result.error = new Err(Err.Code.DBInsert, err && err.message);
                 return Promise.reject(result)
             });
 
@@ -209,7 +209,7 @@ export class MySQL extends Database {
                 return this.addManyToManyRelation<T,M>(model, relation, value)
             }
         }
-        return Promise.reject(new Err(Err.Code.DBInsert));
+        return Promise.reject(new Err(Err.Code.DBInsert, 'error in adding relation'));
     }
 
     public removeRelation<T>(model:T, relation:string, condition?:Condition|number|Array<number>):Promise<any> {
@@ -235,7 +235,7 @@ export class MySQL extends Database {
                 return this.removeManyToManyRelation(model, relation, safeCondition)
             }
         }
-        return Promise.reject(new Err(Err.Code.DBDelete));
+        return Promise.reject(new Err(Err.Code.DBDelete, 'error in removing relation'));
     }
 
     private updateRelations(model:Model, relation, relatedValues) {
@@ -268,7 +268,16 @@ export class MySQL extends Database {
         for (var relation in analysedValue.relations) {
             if (analysedValue.relations.hasOwnProperty(relation)) {
                 if (this.schemaList[model].getFields()[relation].properties.relation.type != Relationship.Type.Many2Many) {
-                    properties.push(`\`${relation}\` = ${this.escape(analysedValue.relations[relation])}`);
+                    var fk;
+                    if (+analysedValue.relations[relation]) {
+                        fk = +analysedValue.relations[relation]
+                    } else {
+                        var relatedModelName = this.schemaList[model].getFields()[relation].properties.relation.model.schema.name;
+                        if (+analysedValue.relations[relation][this.pk(relatedModelName)]) {
+                            fk = +analysedValue.relations[relation][this.pk(relatedModelName)];
+                        }
+                    }
+                    if (fk) properties.push(`\`${relation}\` = ${fk}`);
                 } else {
                     steps.push(this.updateRelations(new this.models[model](value), relation, analysedValue.relations[relation]));
                 }
@@ -279,7 +288,7 @@ export class MySQL extends Database {
             .then(()=>this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ${id}`))
             .then(()=>this.findById(model, id))
             .catch(err=> {
-                result.error = new Err(Err.Code.DBQuery, err.message);
+                result.error = new Err(Err.Code.DBQuery, err && err.message);
                 return Promise.reject(result);
             });
 
@@ -311,7 +320,7 @@ export class MySQL extends Database {
                 return result
             })
             .catch(err=> {
-                result.error = new Err(Err.Code.DBUpdate, err.message);
+                result.error = new Err(Err.Code.DBUpdate, err && err.message);
                 return Promise.reject(result);
             });
     }
@@ -330,7 +339,7 @@ export class MySQL extends Database {
                 return result;
             })
             .catch(err=> {
-                result.error = new Err(Err.Code.DBDelete);
+                result.error = new Err(Err.Code.DBDelete, err && err.message);
                 return Promise.reject(result);
             })
     }
@@ -355,7 +364,7 @@ export class MySQL extends Database {
                 return result;
             })
             .catch(err=> {
-                result.error = new Err(Err.Code.DBDelete, err.message);
+                result.error = new Err(Err.Code.DBDelete, err && err.message);
                 return Promise.reject(result);
             })
     }
@@ -382,7 +391,7 @@ export class MySQL extends Database {
         }
     }
 
-    private getQueryParams(query:Vql):ICalculatedQueryOptions {
+    private getQueryParams(query:Vql, alias:string = query.model):ICalculatedQueryOptions {
         var params:ICalculatedQueryOptions = <ICalculatedQueryOptions>{};
         query.offset = query.offset ? query.offset : (query.page ? query.page - 1 : 0 ) * query.limit;
         params.limit = '';
@@ -393,7 +402,7 @@ export class MySQL extends Database {
         if (query.orderBy.length) {
             var orderArray = [];
             for (var i = 0; i < query.orderBy.length; i++) {
-                orderArray.push(`\`${query.model}\`.${query.orderBy[i].field} ${query.orderBy[i].ascending ? 'ASC' : 'DESC'}`);
+                orderArray.push(`\`${alias}\`.${query.orderBy[i].field} ${query.orderBy[i].ascending ? 'ASC' : 'DESC'}`);
             }
             params.orderBy = orderArray.join(',');
         }
@@ -401,15 +410,15 @@ export class MySQL extends Database {
         var modelFields = this.schemaList[query.model].getFields();
         if (query.fields && query.fields.length) {
             for (var i = 0; i < query.fields.length; i++) {
-                fields.push(`\`${query.model}\`.${query.fields[i]}`)
+                fields.push(`\`${alias}\`.${query.fields[i]}`)
             }
         } else {
             for (var key in modelFields) {
                 if (modelFields.hasOwnProperty(key)) {
                     if (modelFields[key].properties.type != FieldType.Relation) {
-                        fields.push(`\`${query.model}\`.${modelFields[key].fieldName}`);
+                        fields.push(`\`${alias}\`.${modelFields[key].fieldName}`);
                     } else if ((!query.relations || query.relations.indexOf(modelFields[key].fieldName) < 0) && modelFields[key].properties.relation.type != Relationship.Type.Many2Many) {
-                        fields.push(`\`${query.model}\`.${modelFields[key].fieldName}`);
+                        fields.push(`\`${alias}\`.${modelFields[key].fieldName}`);
                     }
                 }
             }
@@ -419,12 +428,11 @@ export class MySQL extends Database {
             var relationName:string = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
             var field:Field = modelFields[relationName];
             if (!field) {
-                throw `FIELD ${relationName} NOT FOUND IN model ${query.model}`
+                throw `FIELD ${relationName} NOT FOUND IN model ${query.model} as ${alias}`
             }
             var properties = field.properties;
             if (properties.type == FieldType.Relation) {
                 if (properties.relation.type == Relationship.Type.One2Many || properties.relation.type == Relationship.Type.One2One) {
-                    var relatedModelName = properties.relation.model.schema.name;
                     var modelFiledList = [];
                     var filedNameList = properties.relation.model.schema.getFieldsNames();
                     var relatedModelFields = properties.relation.model.schema.getFields();
@@ -432,18 +440,18 @@ export class MySQL extends Database {
 
                         if (typeof query.relations[i] == 'string' || query.relations[i]['fields'].indexOf(filedNameList[j]) >= 0) {
                             if (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation || relatedModelFields[filedNameList[j]].properties.relation.type != Relationship.Type.Many2Many) {
-                                modelFiledList.push(`'"${filedNameList[j]}":','"',${this.qoute(filedNameList[j])},'"'`)
+                                modelFiledList.push(`'"${filedNameList[j]}":','"',c.${filedNameList[j]},'"'`)
                             }
                         }
                     }
                     var name = properties.relation.model.schema.name;
-                    modelFiledList.length && fields.push(`(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM ${name} WHERE \`${relatedModelName}\`.${this.pk(name)} = ${query.model}.${field.fieldName}  LIMIT 1) as ${field.fieldName}`)
+                    modelFiledList.length && fields.push(`(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${name}\` c WHERE c.${this.pk(name)} = \`${alias}\`.${field.fieldName}  LIMIT 1) as ${field.fieldName}`)
                 }
             }
         }
         params.condition = '';
         if (query.condition) {
-            params.condition = this.getCondition(query.model, query.condition);
+            params.condition = this.getCondition(alias, query.condition);
             params.condition = params.condition ? params.condition : '';
         }
         params.join = '';
@@ -468,8 +476,9 @@ export class MySQL extends Database {
                     default :
                         type = 'LEFT JOIN';
                 }
-                joins.push(`${type} ${join.vql.model} ON (${query.model}.${join.field} = ${join.vql.model}.${this.pk(join.vql.model)})`);
-                var joinParam = this.getQueryParams(join.vql);
+                var modelsAlias = join.vql.model + Math.floor(Math.random() * 100).toString();
+                joins.push(`${type} ${join.vql.model} as ${modelsAlias} ON (${alias}.${join.field} = ${modelsAlias}.${this.pk(join.vql.model)})`);
+                var joinParam = this.getQueryParams(join.vql, modelsAlias);
                 if (joinParam.fields) {
                     fields.push(joinParam.fields);
                 }
@@ -612,9 +621,9 @@ export class MySQL extends Database {
         var fields = schema.getFields();
         var createDefinition = this.createDefinition(fields, schema.name);
         var ownTablePromise =
-            this.query(`DROP TABLE IF EXISTS ${schema.name}`)
+            this.query(`DROP TABLE IF EXISTS \`${schema.name}\``)
                 .then(()=> {
-                    return this.query(`CREATE TABLE ${schema.name} (\n${createDefinition.ownColumn})\n ENGINE=InnoDB DEFAULT CHARSET=utf8`)
+                    return this.query(`CREATE TABLE \`${schema.name}\` (\n${createDefinition.ownColumn})\n ENGINE=InnoDB DEFAULT CHARSET=utf8`)
                 });
         var translateTablePromise = Promise.resolve(true);
         if (createDefinition.lingualColumn) {
@@ -790,7 +799,7 @@ export class MySQL extends Database {
         var modelName = model.constructor['schema'].name;
         var fields = this.schemaList[modelName].getFields();
         var relatedModelName = fields[relation].properties.relation.model.schema.name;
-        var readIdPromise = Promise.reject(new Err(Err.Code.DBUpdate));
+        var readIdPromise;
         if (fields[relation].properties.relation.isWeek && typeof value == 'object' && !value[this.pk(relatedModelName)]) {
             var relatedObject = new fields[relation].properties.relation.model(value);
             readIdPromise = relatedObject.insert().then(result=> {
@@ -810,7 +819,7 @@ export class MySQL extends Database {
                 return result;
             })
             .catch(err=> {
-                return Promise.reject(new Err(Err.Code.DBUpdate, err.message));
+                return Promise.reject(new Err(Err.Code.DBUpdate, err && err.message));
             })
 
     }
@@ -871,7 +880,7 @@ export class MySQL extends Database {
 
             })
             .catch(err=> {
-                return Promise.reject(new Err(Err.Code.DBInsert, err.message));
+                return Promise.reject(new Err(Err.Code.DBInsert, err && err.message));
             });
 
     }
@@ -898,7 +907,7 @@ export class MySQL extends Database {
 
             })
             .catch(err=> {
-                return Promise.reject(new Err(Err.Code.DBUpdate, err.message))
+                return Promise.reject(new Err(Err.Code.DBUpdate, err && err.message))
             })
 
     }
