@@ -445,7 +445,7 @@ export class MySQL extends Database {
                         }
                     }
                     var name = properties.relation.model.schema.name;
-                    modelFiledList.length && fields.push(`(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${name}\` c WHERE c.${this.pk(name)} = \`${alias}\`.${field.fieldName}  LIMIT 1) as ${field.fieldName}`)
+                    modelFiledList.length && fields.push(`(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${name}\` as c WHERE c.${this.pk(name)} = \`${alias}\`.${field.fieldName}  LIMIT 1) as ${field.fieldName}`)
                 }
             }
         }
@@ -974,7 +974,7 @@ export class MySQL extends Database {
         return this.connection.escape(value);
     }
 
-    private query<T>(query:string):Promise<T> {
+    public query<T>(query:string):Promise<T> {
         return new Promise((resolve, reject)=> {
             this.connection.query(query, (err, result)=> {
                 if (err) return reject(err);
