@@ -1,6 +1,6 @@
 {
   "name": "vesta-driver-mysql",
-  "version": "0.2.33",
+  "version": "0.2.37",
   "description": "Vesta Platform MySQL drievr based on Database Class",
   "keywords": [
     "NodeJS",
@@ -30,7 +30,7 @@
   "dependencies": {
     "mysql": "^2.10.2",
     "vesta-util": "^0.2.6",
-    "vesta-schema": "^0.3.1"
+    "vesta-schema": "^0.3.14"
   },
   "devDependencies": {}
 }

@@ -187,7 +187,7 @@ export class MySQL extends Database {
 
         }
 
-        if(!insertList.length){
+        if (!insertList.length) {
             result.items = [];
             return Promise.resolve(result);
         }
@@ -207,7 +207,7 @@ export class MySQL extends Database {
     public addRelation<T,M>(model:T, relation:string, value:number|Array<number>|M|Array<M>):Promise<IUpsertResult<M>> {
         var modelName = model.constructor['schema'].name;
         var fields = this.schemaList[modelName].getFields();
-        if (fields[relation] && fields[relation].properties.type == FieldType.Relation) {
+        if (fields[relation] && fields[relation].properties.type == FieldType.Relation && value) {
             if (fields[relation].properties.relation.type != Relationship.Type.Many2Many) {
                 return this.addOneToManyRelation<T,M>(model, relation, value)
             } else {
@@ -249,7 +249,9 @@ export class MySQL extends Database {
         var ids = [0];
         if (relatedValues instanceof Array) {
             for (var i = relatedValues.length; i--;) {
-                ids.push(typeof relatedValues[i] == 'object' ? relatedValues[i][this.pk(relatedModelName)] : relatedValues[i]);
+                if (relatedValues[i]) {
+                    ids.push(typeof relatedValues[i] == 'object' ? relatedValues[i][this.pk(relatedModelName)] : relatedValues[i]);
+                }
             }
         }
         return this.query(`DELETE FROM ${this.pascalCase(modelName)}Has${this.pascalCase(relation)} 
@@ -278,7 +280,7 @@ export class MySQL extends Database {
                         fk = +analysedValue.relations[relation]
                     } else {
                         var relatedModelName = this.schemaList[model].getFields()[relation].properties.relation.model.schema.name;
-                        if (+analysedValue.relations[relation][this.pk(relatedModelName)]) {
+                        if (analysedValue.relations[relation] && +analysedValue.relations[relation][this.pk(relatedModelName)]) {
                             fk = +analysedValue.relations[relation][this.pk(relatedModelName)];
                         }
                     }
@@ -811,8 +813,13 @@ export class MySQL extends Database {
                 return result.items[0][this.pk(relatedModelName)];
             })
         } else {
-            var id = +value ? +value : +value[this.pk(relatedModelName)];
-            if (!id || id <= 0) return Promise.reject(new Error('invalid related model id'));
+            var id;
+            if (+value) {
+                id = +value;
+            } else if (typeof value == 'object') {
+                id = +value[this.pk(relatedModelName)]
+            }
+            if (!id || id <= 0) return Promise.reject(new Error(`invalid <<${relation}>> related model id`));
             readIdPromise = Promise.resolve(id);
         }
         return readIdPromise
@@ -843,7 +850,7 @@ export class MySQL extends Database {
             for (var i = value['length']; i--;) {
                 if (+value[i]) {
                     relationIds.push(+value[i])
-                } else if (typeof value[i] == 'object') {
+                } else if (value[i] && typeof value[i] == 'object') {
                     if (+value[i][this.pk(relatedModelName)])relationIds.push(+value[i][this.pk(relatedModelName)]);
                     else if (fields[relation].properties.relation.isWeek) newRelation.push(value[i])
                 }
@@ -863,7 +870,7 @@ export class MySQL extends Database {
                         for (var i = result.items.length; i--;) {
                             relationIds.push(result.items[i][this.pk(relatedModelName)]);
                         }
-                        return relationIds;
+                        return relationIds; 
                     })
 
             })
