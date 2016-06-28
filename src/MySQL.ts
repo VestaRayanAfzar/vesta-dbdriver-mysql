@@ -272,21 +272,23 @@ export class MySQL extends Database {
         }
         var id = value[this.pk(model)];
         var steps = [];
-        for (var relation in analysedValue.relations) {
-            if (analysedValue.relations.hasOwnProperty(relation)) {
-                if (this.schemaList[model].getFields()[relation].properties.relation.type != Relationship.Type.Many2Many) {
-                    var fk;
-                    if (+analysedValue.relations[relation]) {
-                        fk = +analysedValue.relations[relation]
-                    } else {
-                        var relatedModelName = this.schemaList[model].getFields()[relation].properties.relation.model.schema.name;
-                        if (analysedValue.relations[relation] && +analysedValue.relations[relation][this.pk(relatedModelName)]) {
-                            fk = +analysedValue.relations[relation][this.pk(relatedModelName)];
-                        }
-                    }
-                    if (fk) properties.push(`\`${relation}\` = ${fk}`);
-                } else {
-                    steps.push(this.updateRelations(new this.models[model](value), relation, analysedValue.relations[relation]));
+        var relationsNames = Object.keys(analysedValue.relations);
+        var modelFields = this.schemaList[model].getFields();
+        for (var i = relationsNames.length; i--;) {
+            let relation = relationsNames[i];
+            let relationValue = analysedValue.relations[relation];
+            // todo check if it is required
+            if (!relationValue) continue;
+            if (modelFields[relation].properties.relation.type == Relationship.Type.Many2Many) {
+                steps.push(this.updateRelations(new this.models[model](value), relation, relationValue));
+            } else {
+                let fk = +relationValue;
+                if (!fk && 'object' == typeof relationValue) {
+                    var relatedModelName = modelFields[relation].properties.relation.model.schema.name;
+                    fk = +relationValue[this.pk(relatedModelName)];
+                }
+                if (fk) {
+                    properties.push(`\`${relation}\` = ${fk}`);
                 }
             }
         }
@@ -870,7 +872,7 @@ export class MySQL extends Database {
                         for (var i = result.items.length; i--;) {
                             relationIds.push(result.items[i][this.pk(relatedModelName)]);
                         }
-                        return relationIds; 
+                        return relationIds;
                     })
 
             })
@@ -994,5 +996,4 @@ export class MySQL extends Database {
             })
         })
     }
-
 }
