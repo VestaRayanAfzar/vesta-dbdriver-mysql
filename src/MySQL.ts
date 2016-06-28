@@ -25,10 +25,10 @@ export class MySQL extends Database {
     private models:IModelCollection;
     private primaryKeys:{[name:string]:string} = {};
 
-    public connect():Promise<Database> {
-        if (this.connection) return Promise.resolve(this);
+    public connect(force = false):Promise<Database> {
+        if (this.connection && !force) return Promise.resolve(this);
         return new Promise<Database>((resolve, reject)=> {
-            if (!this.pool) {
+            if (!this.pool || force) {
                 this.pool = mysql.createPool(<IConnectionConfig>{
                     host: this.config.host,
                     port: +this.config.port,
@@ -870,7 +870,7 @@ export class MySQL extends Database {
                         for (var i = result.items.length; i--;) {
                             relationIds.push(result.items[i][this.pk(relatedModelName)]);
                         }
-                        return relationIds; 
+                        return relationIds;
                     })
 
             })
@@ -989,8 +989,22 @@ export class MySQL extends Database {
     public query<T>(query:string):Promise<T> {
         return new Promise((resolve, reject)=> {
             this.connection.query(query, (err, result)=> {
-                if (err) return reject(err);
-                resolve(<T>result);
+                if (err && err.fatal) {
+                    this.connection.end((endError)=>{
+                        if(endError){
+                            this.connection.destroy()
+                        }
+                        this.connect(true).then(()=> {
+                            reject(err);
+                        });
+                    })
+
+                }
+                else if (err) {
+                    return reject(err);
+                } else {
+                    resolve(<T>result);
+                }
             })
         })
     }
