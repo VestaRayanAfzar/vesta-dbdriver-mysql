@@ -992,15 +992,7 @@ export class MySQL extends Database {
         return new Promise((resolve, reject)=> {
             this.connection.query(query, (err, result)=> {
                 if (err && err.fatal) {
-                    this.connection.end((endError)=>{
-                        if(endError){
-                            this.connection.destroy()
-                        }
-                        this.connect(true).then(()=> {
-                            reject(err);
-                        });
-                    })
-
+                    this.close().then(()=>this.connect(true).then(()=>reject(err))).catch(()=>reject(err));
                 }
                 else if (err) {
                     return reject(err);
@@ -1008,6 +1000,26 @@ export class MySQL extends Database {
                     resolve(<T>result);
                 }
             })
+        })
+    }
+
+    public close(destroy = false):Promise<boolean> {
+        return new Promise((resolve, reject)=> {
+            if (this.connection) {
+                this.connection.end((err)=> {
+                    if (err) {
+                        if (destroy) {
+                            this.connection.destroy();
+                            return resolve(true);
+                        }
+                        return reject(err)
+                    }
+                    resolve(true);
+                })
+            }else{
+                resolve(true);
+            }
+
         })
     }
 }
