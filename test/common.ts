@@ -7,7 +7,7 @@ import {Permission} from "./models/Permission";
 export var config = <IDatabaseConfig>{
     protocol: 'mysql',
     host: 'mysql',
-    port: '3306',
+    port: 3306,
     user: 'root',
     password: '',
     database: 'TestDB',

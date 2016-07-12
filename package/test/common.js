@@ -6,7 +6,7 @@ var Permission_1 = require("./models/Permission");
 exports.config = {
     protocol: 'mysql',
     host: 'mysql',
-    port: '3306',
+    port: 3306,
     user: 'root',
     password: '',
     database: 'TestDB',

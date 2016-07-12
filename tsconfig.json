@@ -7,8 +7,7 @@
   },
   "files": [
     "typings/tsd.d.ts",
-    "src/MySQL.ts",
-    "test/MySQL.ts"
+    "src/MySQL.ts"
   ],
   "exclude": [
     "node_modules",

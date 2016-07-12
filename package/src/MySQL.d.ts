@@ -16,6 +16,8 @@ export declare class MySQL extends Database {
     findByModelValues<T>(model: string, modelValues: T, option?: IQueryOption): Promise<IQueryResult<T>>;
     findByQuery<T>(query: Vql): Promise<IQueryResult<T>>;
     insertOne<T>(model: string, value: T): Promise<IUpsertResult<T>>;
+    private updateList<T>(model, list, value);
+    private addList<T>(model, list, value);
     insertAll<T>(model: string, value: Array<T>): Promise<IUpsertResult<T>>;
     addRelation<T, M>(model: T, relation: string, value: number | Array<number> | M | Array<M>): Promise<IUpsertResult<M>>;
     removeRelation<T>(model: T, relation: string, condition?: Condition | number | Array<number>): Promise<any>;
@@ -28,10 +30,12 @@ export declare class MySQL extends Database {
     private getQueryParams(query, alias?);
     private getCondition(model, condition);
     private getManyToManyRelation(list, query);
+    private getLists(list, query);
     private normalizeList(schema, list);
     private parseJson(str);
     private createTable(schema);
     private relationTable(field, table);
+    private listTable(field, table);
     private camelCase(str);
     private pascalCase(str);
     private qoute(str);

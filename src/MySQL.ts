@@ -124,11 +124,14 @@ export class MySQL extends Database {
             .then(data=> {
                 var list = <T[]>data[1];
                 result.total = data[0][0]['total'];
-                return this.getManyToManyRelation(list, query)
-                    .then(list=> {
-                        result.items = this.normalizeList(this.schemaList[query.model], list);
-                        return result;
-                    });
+                return Promise.all([
+                    this.getManyToManyRelation(list, query),
+                    this.getLists(list, query)
+                ]).then(()=>list)
+            })
+            .then(list=> {
+                result.items = this.normalizeList(this.schemaList[query.model], list);
+                return result;
             })
             .catch(err=> {
                 if (err) {
@@ -155,6 +158,11 @@ export class MySQL extends Database {
                     }
 
                 }
+                for (var key in analysedValue.lists) {
+                    if (analysedValue.lists.hasOwnProperty(key)) {
+                        steps.push(this.addList(new this.models[model]({id: insertResult['insertId']}), key, analysedValue.lists[key]));
+                    }
+                }
                 var id = insertResult['insertId'];
                 return Promise.all(steps).then(()=>this.query(`SELECT * FROM \`${model}\` WHERE ${this.pk(model)} = ${id}`));
             })
@@ -166,6 +174,30 @@ export class MySQL extends Database {
                 result.error = new Err(Err.Code.DBInsert, err && err.message);
                 return Promise.reject(result);
             });
+    }
+
+    private updateList<T>(model:T, list, value) {
+        var modelName = model['schema'].name;
+        var table = modelName + this.pascalCase(list) + 'List';
+        return this.query(`DELETE FROM ${table} WHERE fk = ${model[this.pk(modelName)]}`).then(()=> {
+            return this.addList(model, list, value)
+        })
+    }
+
+    private addList<T>(model:T, list:string, value:Array<any>):Promise<any> {
+        var modelName = model['schema'].name;
+        var values = value.reduce((prev, value, index, items)=> {
+            var result = prev;
+            result += `(${model[this.pk(modelName)]} , ${this.escape(value)})`;
+            if (index < items.length - 1) result += ',';
+            return result
+        }, '');
+        if (!value) {
+            return Promise.resolve([]);
+        }
+        var table = modelName + this.pascalCase(list) + 'List';
+        return this.query(`INSERT INTO ${table} (\`fk\`,\`value\`) VALUES ${values}`)
+
     }
 
     public insertAll<T>(model:string, value:Array<T>):Promise < IUpsertResult <T>> {
@@ -292,6 +324,11 @@ export class MySQL extends Database {
                 }
             }
         }
+        for (var key in analysedValue.lists) {
+            if (analysedValue.lists.hasOwnProperty(key)) {
+                steps.push(this.updateList(new this.models[model]({id: id}), key, analysedValue.lists[key]));
+            }
+        }
 
         return Promise.all(steps)
             .then(()=>this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ${id}`))
@@ -383,20 +420,24 @@ export class MySQL extends Database {
         var schemaFieldsName = this.schemaList[model].getFieldsNames();
         var schemaFields = this.schemaList[model].getFields();
         var relations = {};
+        var lists = {};
+
         for (var key in value) {
             if (value.hasOwnProperty(key) && schemaFieldsName.indexOf(key) >= 0 && value[key] !== undefined) {
-                if (schemaFields[key].properties.type != FieldType.Relation) {
+                if (schemaFields[key].properties.type == FieldType.Relation) {
+                    relations[key] = value[key]
+                } else if (schemaFields[key].properties.type == FieldType.List) {
+                    lists[key] = value[key]
+                } else {
                     var thisValue:string|number = `${this.escape(value[key])}`;
                     properties.push({field: key, value: thisValue})
-                } else {
-                    relations[key] = value[key]
                 }
-
             }
         }
         return {
             properties: properties,
             relations: relations,
+            lists: lists,
         }
     }
 
@@ -592,6 +633,54 @@ export class MySQL extends Database {
 
     }
 
+    private getLists(list:Array < any >, query:Vql) {
+        var runListQuery = (listName)=> {
+            var name = query.model + this.pascalCase(listName) + 'List';
+            return this.query(`SELECT * FROM \`${name}\` WHERE fk IN (${ids.join(',')})`)
+                .then(listsData=> {
+                    return {
+                        name: listName,
+                        data: listsData
+                    };
+                })
+
+
+        };
+        var primaryKey = this.pk(query.model);
+        var ids = [];
+        for (var i = list.length; i--;) {
+            ids.push(list[i][primaryKey]);
+        }
+        var promiseList:Array<Promise<any>> = [];
+        if (ids.length) {
+            var fields = this.schemaList[query.model].getFields();
+            for (let keys = Object.keys(fields), i = 0, il = keys.length; i < il; i++) {
+                let field = keys[i];
+                if (fields[field].properties.type == FieldType.List && (!query.fields || !query.fields.length || query.fields.indexOf(field) >= 0)) {
+                    promiseList.push(runListQuery(field))
+                }
+            }
+        }
+        if (!promiseList.length) return Promise.resolve(list);
+        var listJson = {};
+        for (var i = list.length; i--;) {
+            listJson[list[i][primaryKey]] = list[i];
+        }
+        return Promise.all(promiseList)
+            .then(data=> {
+                for (var i = data.length; i--;) {
+                    var listName = data[i].name;
+                    var listData = data[i].data;
+                    for (var k = listData.length; k--;) {
+                        let id = list[k]['fk'];
+                        listJson[id][listName] = listJson[id][listName] || [];
+                        listJson[id][listName].push(listData[k]['value']);
+                    }
+                }
+                return list;
+            });
+    }
+
     private normalizeList(schema:Schema, list:Array < any >) {
         var fields:IModelFields = schema.getFields();
         for (var i = list.length; i--;) {
@@ -649,10 +738,22 @@ export class MySQL extends Database {
     }
 
     private relationTable(field:Field, table:string):Promise < any > {
-        var schema = new Schema(table + 'Has' + this.pascalCase(field.fieldName));
+        var name = table + 'Has' + this.pascalCase(field.fieldName);
+        var schema = new Schema(name);
         schema.addField('id').primary().required();
         schema.addField(this.camelCase(table)).type(FieldType.Integer).required();
         schema.addField(this.camelCase(field.properties.relation.model.schema.name)).type(FieldType.Integer).required();
+        this.schemaList[name] = schema;
+        return this.createTable(schema)();
+    }
+
+    private listTable(field:Field, table:string):Promise < any > {
+        var name = table + this.pascalCase(field.fieldName) + 'List';
+        var schema = new Schema(name);
+        schema.addField('id').primary().required();
+        schema.addField('fk').type(FieldType.Integer).required();
+        schema.addField('value').type(field.properties.itemsType).required();
+        this.schemaList[name] = schema;
         return this.createTable(schema)();
     }
 
@@ -685,6 +786,8 @@ export class MySQL extends Database {
                     }
                 } else if (fields[field].properties.type == FieldType.Relation && fields[field].properties.relation.type == Relationship.Type.Many2Many) {
                     relations.push(this.relationTable(fields[field], table));
+                } else if (fields[field].properties.type == FieldType.List) {
+                    relations.push(this.listTable(fields[field], table));
                 }
             }
         }
@@ -715,7 +818,7 @@ export class MySQL extends Database {
 
     private columnDefinition(filed:Field) {
         var properties = filed.properties;
-        if (properties.relation && properties.relation.type == Relationship.Type.Many2Many) {
+        if (properties.type == FieldType.List || (properties.relation && properties.relation.type == Relationship.Type.Many2Many)) {
             return '';
         }
         var columnSyntax = `\`${filed.fieldName}\` ${this.getType(properties)}`;
@@ -1016,7 +1119,7 @@ export class MySQL extends Database {
                     }
                     resolve(true);
                 })
-            }else{
+            } else {
                 resolve(true);
             }
 

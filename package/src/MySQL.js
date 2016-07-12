@@ -122,11 +122,14 @@ var MySQL = (function (_super) {
             .then(function (data) {
             var list = data[1];
             result.total = data[0][0]['total'];
-            return _this.getManyToManyRelation(list, query)
-                .then(function (list) {
-                result.items = _this.normalizeList(_this.schemaList[query.model], list);
-                return result;
-            });
+            return Promise.all([
+                _this.getManyToManyRelation(list, query),
+                _this.getLists(list, query)
+            ]).then(function () { return list; });
+        })
+            .then(function (list) {
+            result.items = _this.normalizeList(_this.schemaList[query.model], list);
+            return result;
         })
             .catch(function (err) {
             if (err) {
@@ -151,6 +154,11 @@ var MySQL = (function (_super) {
                     steps.push(_this.addRelation(new _this.models[model]({ id: insertResult['insertId'] }), key, analysedValue.relations[key]));
                 }
             }
+            for (var key in analysedValue.lists) {
+                if (analysedValue.lists.hasOwnProperty(key)) {
+                    steps.push(_this.addList(new _this.models[model]({ id: insertResult['insertId'] }), key, analysedValue.lists[key]));
+                }
+            }
             var id = insertResult['insertId'];
             return Promise.all(steps).then(function () { return _this.query("SELECT * FROM `" + model + "` WHERE " + _this.pk(model) + " = " + id); });
         })
@@ -162,6 +170,30 @@ var MySQL = (function (_super) {
             result.error = new Err_1.Err(Err_1.Err.Code.DBInsert, err && err.message);
             return Promise.reject(result);
         });
+    };
+    MySQL.prototype.updateList = function (model, list, value) {
+        var _this = this;
+        var modelName = model['schema'].name;
+        var table = modelName + this.pascalCase(list) + 'List';
+        return this.query("DELETE FROM " + table + " WHERE fk = " + model[this.pk(modelName)]).then(function () {
+            return _this.addList(model, list, value);
+        });
+    };
+    MySQL.prototype.addList = function (model, list, value) {
+        var _this = this;
+        var modelName = model['schema'].name;
+        var values = value.reduce(function (prev, value, index, items) {
+            var result = prev;
+            result += "(" + model[_this.pk(modelName)] + " , " + _this.escape(value) + ")";
+            if (index < items.length - 1)
+                result += ',';
+            return result;
+        }, '');
+        if (!value) {
+            return Promise.resolve([]);
+        }
+        var table = modelName + this.pascalCase(list) + 'List';
+        return this.query("INSERT INTO " + table + " (`fk`,`value`) VALUES " + values);
     };
     MySQL.prototype.insertAll = function (model, value) {
         var result = {};
@@ -286,6 +318,11 @@ var MySQL = (function (_super) {
                 }
             }
         }
+        for (var key in analysedValue.lists) {
+            if (analysedValue.lists.hasOwnProperty(key)) {
+                steps.push(this.updateList(new this.models[model]({ id: id }), key, analysedValue.lists[key]));
+            }
+        }
         return Promise.all(steps)
             .then(function () { return _this.query("UPDATE `" + model + "` SET " + properties.join(',') + " WHERE " + _this.pk(model) + " = " + id); })
             .then(function () { return _this.findById(model, id); })
@@ -376,20 +413,25 @@ var MySQL = (function (_super) {
         var schemaFieldsName = this.schemaList[model].getFieldsNames();
         var schemaFields = this.schemaList[model].getFields();
         var relations = {};
+        var lists = {};
         for (var key in value) {
             if (value.hasOwnProperty(key) && schemaFieldsName.indexOf(key) >= 0 && value[key] !== undefined) {
-                if (schemaFields[key].properties.type != Field_1.FieldType.Relation) {
-                    var thisValue = "" + this.escape(value[key]);
-                    properties.push({ field: key, value: thisValue });
+                if (schemaFields[key].properties.type == Field_1.FieldType.Relation) {
+                    relations[key] = value[key];
+                }
+                else if (schemaFields[key].properties.type == Field_1.FieldType.List) {
+                    lists[key] = value[key];
                 }
                 else {
-                    relations[key] = value[key];
+                    var thisValue = "" + this.escape(value[key]);
+                    properties.push({ field: key, value: thisValue });
                 }
             }
         }
         return {
             properties: properties,
             relations: relations,
+            lists: lists,
         };
     };
     MySQL.prototype.getQueryParams = function (query, alias) {
@@ -578,6 +620,53 @@ var MySQL = (function (_super) {
             return list;
         });
     };
+    MySQL.prototype.getLists = function (list, query) {
+        var _this = this;
+        var runListQuery = function (listName) {
+            var name = query.model + _this.pascalCase(listName) + 'List';
+            return _this.query("SELECT * FROM `" + name + "` WHERE fk IN (" + ids.join(',') + ")")
+                .then(function (listsData) {
+                return {
+                    name: listName,
+                    data: listsData
+                };
+            });
+        };
+        var primaryKey = this.pk(query.model);
+        var ids = [];
+        for (var i = list.length; i--;) {
+            ids.push(list[i][primaryKey]);
+        }
+        var promiseList = [];
+        if (ids.length) {
+            var fields = this.schemaList[query.model].getFields();
+            for (var keys = Object.keys(fields), i_1 = 0, il = keys.length; i_1 < il; i_1++) {
+                var field = keys[i_1];
+                if (fields[field].properties.type == Field_1.FieldType.List && (!query.fields || !query.fields.length || query.fields.indexOf(field) >= 0)) {
+                    promiseList.push(runListQuery(field));
+                }
+            }
+        }
+        if (!promiseList.length)
+            return Promise.resolve(list);
+        var listJson = {};
+        for (var i = list.length; i--;) {
+            listJson[list[i][primaryKey]] = list[i];
+        }
+        return Promise.all(promiseList)
+            .then(function (data) {
+            for (var i = data.length; i--;) {
+                var listName = data[i].name;
+                var listData = data[i].data;
+                for (var k = listData.length; k--;) {
+                    var id = list[k]['fk'];
+                    listJson[id][listName] = listJson[id][listName] || [];
+                    listJson[id][listName].push(listData[k]['value']);
+                }
+            }
+            return list;
+        });
+    };
     MySQL.prototype.normalizeList = function (schema, list) {
         var fields = schema.getFields();
         for (var i = list.length; i--;) {
@@ -631,10 +720,21 @@ var MySQL = (function (_super) {
         return function () { return Promise.all([ownTablePromise, translateTablePromise].concat(createDefinition.relations)); };
     };
     MySQL.prototype.relationTable = function (field, table) {
-        var schema = new Schema_1.Schema(table + 'Has' + this.pascalCase(field.fieldName));
+        var name = table + 'Has' + this.pascalCase(field.fieldName);
+        var schema = new Schema_1.Schema(name);
         schema.addField('id').primary().required();
         schema.addField(this.camelCase(table)).type(Field_1.FieldType.Integer).required();
         schema.addField(this.camelCase(field.properties.relation.model.schema.name)).type(Field_1.FieldType.Integer).required();
+        this.schemaList[name] = schema;
+        return this.createTable(schema)();
+    };
+    MySQL.prototype.listTable = function (field, table) {
+        var name = table + this.pascalCase(field.fieldName) + 'List';
+        var schema = new Schema_1.Schema(name);
+        schema.addField('id').primary().required();
+        schema.addField('fk').type(Field_1.FieldType.Integer).required();
+        schema.addField('value').type(field.properties.itemsType).required();
+        this.schemaList[name] = schema;
         return this.createTable(schema)();
     };
     MySQL.prototype.camelCase = function (str) {
@@ -667,6 +767,9 @@ var MySQL = (function (_super) {
                 else if (fields[field].properties.type == Field_1.FieldType.Relation && fields[field].properties.relation.type == Field_1.Relationship.Type.Many2Many) {
                     relations.push(this.relationTable(fields[field], table));
                 }
+                else if (fields[field].properties.type == Field_1.FieldType.List) {
+                    relations.push(this.listTable(fields[field], table));
+                }
             }
         }
         var keyFiled;
@@ -692,7 +795,7 @@ var MySQL = (function (_super) {
     };
     MySQL.prototype.columnDefinition = function (filed) {
         var properties = filed.properties;
-        if (properties.relation && properties.relation.type == Field_1.Relationship.Type.Many2Many) {
+        if (properties.type == Field_1.FieldType.List || (properties.relation && properties.relation.type == Field_1.Relationship.Type.Many2Many)) {
             return '';
         }
         var columnSyntax = "`" + filed.fieldName + "` " + this.getType(properties);
