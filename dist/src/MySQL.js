@@ -55,25 +55,22 @@ var MySQL = (function (_super) {
             return this.primaryKeys[modelName];
         }
         else {
+            var pk = 'id';
             var fields = this.schemaList[modelName].getFields();
-            for (var field in fields) {
-                if (fields.hasOwnProperty(field)) {
-                    if (fields[field].properties.primary) {
-                        this.primaryKeys[modelName] = field;
-                        return field;
-                    }
+            for (var i = 0, keys = Object.keys(fields), il = keys.length; i < il; i++) {
+                if (fields[keys[i]].properties.primary) {
+                    pk = keys[i];
+                    break;
                 }
             }
         }
-        this.primaryKeys[modelName] = 'id';
-        return 'id';
+        this.primaryKeys[modelName] = pk;
+        return pk;
     };
     MySQL.prototype.init = function () {
         var createSchemaPromise = this.initializeDatabase();
-        for (var schema in this.schemaList) {
-            if (this.schemaList.hasOwnProperty(schema)) {
-                createSchemaPromise = createSchemaPromise.then(this.createTable(this.schemaList[schema]));
-            }
+        for (var i = 0, schemaNames = Object.keys(this.schemaList), il = schemaNames.length; i < il; i++) {
+            createSchemaPromise = createSchemaPromise.then(this.createTable(this.schemaList[schemaNames[i]]));
         }
         return createSchemaPromise;
     };
@@ -92,10 +89,8 @@ var MySQL = (function (_super) {
     MySQL.prototype.findByModelValues = function (model, modelValues, option) {
         if (option === void 0) { option = {}; }
         var condition = new Vql_1.Condition(Vql_1.Condition.Operator.And);
-        for (var key in modelValues) {
-            if (modelValues.hasOwnProperty(key)) {
-                condition.append((new Vql_1.Condition(Vql_1.Condition.Operator.EqualTo)).compare(key, modelValues[key]));
-            }
+        for (var i = 0, keys = Object.keys(modelValues), il = keys.length; i < il; i++) {
+            condition.append((new Vql_1.Condition(Vql_1.Condition.Operator.EqualTo)).compare(keys[i], modelValues[keys[i]]));
         }
         var query = new Vql_1.Vql(model);
         if (option.fields)
@@ -182,6 +177,9 @@ var MySQL = (function (_super) {
     MySQL.prototype.addList = function (model, list, value) {
         var _this = this;
         var modelName = model['schema'].name;
+        if (!value || !value.length) {
+            return Promise.resolve([]);
+        }
         var values = value.reduce(function (prev, value, index, items) {
             var result = prev;
             result += "(" + model[_this.pk(modelName)] + " , " + _this.escape(value) + ")";
@@ -189,9 +187,6 @@ var MySQL = (function (_super) {
                 result += ',';
             return result;
         }, '');
-        if (!value) {
-            return Promise.resolve([]);
-        }
         var table = modelName + this.pascalCase(list) + 'List';
         return this.query("INSERT INTO " + table + " (`fk`,`value`) VALUES " + values);
     };
@@ -201,7 +196,7 @@ var MySQL = (function (_super) {
         var fieldsName = [];
         var insertList = [];
         for (var field in fields) {
-            if (fields.hasOwnProperty(field) && fields[field].properties.type != Field_1.FieldType.Relation || fields[field].properties.relation.type != Field_1.Relationship.Type.Many2Many) {
+            if (fields.hasOwnProperty(field) && fields[field].properties.type != Field_1.FieldType.Relation || fields[field].properties.relation.type != Field_1.RelationType.Many2Many) {
                 fieldsName.push(field);
             }
         }
@@ -216,7 +211,7 @@ var MySQL = (function (_super) {
             result.items = [];
             return Promise.resolve(result);
         }
-        return this.query("INSERT INTO " + model + "} (" + fieldsName.join(',') + ") VALUES " + insertList.join(','))
+        return this.query("INSERT INTO " + model + " (" + fieldsName.join(',') + ") VALUES " + insertList.join(','))
             .then(function (insertResult) {
             result.items = insertResult;
             return result;
@@ -230,7 +225,7 @@ var MySQL = (function (_super) {
         var modelName = model.constructor['schema'].name;
         var fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == Field_1.FieldType.Relation && value) {
-            if (fields[relation].properties.relation.type != Field_1.Relationship.Type.Many2Many) {
+            if (fields[relation].properties.relation.type != Field_1.RelationType.Many2Many) {
                 return this.addOneToManyRelation(model, relation, value);
             }
             else {
@@ -258,7 +253,7 @@ var MySQL = (function (_super) {
         }
         var fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == Field_1.FieldType.Relation) {
-            if (fields[relation].properties.relation.type != Field_1.Relationship.Type.Many2Many) {
+            if (fields[relation].properties.relation.type != Field_1.RelationType.Many2Many) {
                 return this.removeOneToManyRelation(model, relation);
             }
             else {
@@ -304,7 +299,7 @@ var MySQL = (function (_super) {
             // todo check if it is required
             if (!relationValue)
                 continue;
-            if (modelFields[relation].properties.relation.type == Field_1.Relationship.Type.Many2Many) {
+            if (modelFields[relation].properties.relation.type == Field_1.RelationType.Many2Many) {
                 steps.push(this.updateRelations(new this.models[model](value), relation, relationValue));
             }
             else {
@@ -454,16 +449,20 @@ var MySQL = (function (_super) {
         var modelFields = this.schemaList[query.model].getFields();
         if (query.fields && query.fields.length) {
             for (var i = 0; i < query.fields.length; i++) {
+                if (modelFields[query.fields[i]] && modelFields[query.fields[i]].properties.type == Field_1.FieldType.List)
+                    continue;
                 fields.push("`" + alias + "`." + query.fields[i]);
             }
         }
         else {
             for (var key in modelFields) {
                 if (modelFields.hasOwnProperty(key)) {
+                    if (modelFields[key].properties.type == Field_1.FieldType.List)
+                        continue;
                     if (modelFields[key].properties.type != Field_1.FieldType.Relation) {
                         fields.push("`" + alias + "`." + modelFields[key].fieldName);
                     }
-                    else if ((!query.relations || query.relations.indexOf(modelFields[key].fieldName) < 0) && modelFields[key].properties.relation.type != Field_1.Relationship.Type.Many2Many) {
+                    else if ((!query.relations || query.relations.indexOf(modelFields[key].fieldName) < 0) && modelFields[key].properties.relation.type != Field_1.RelationType.Many2Many) {
                         fields.push("`" + alias + "`." + modelFields[key].fieldName);
                     }
                 }
@@ -477,13 +476,13 @@ var MySQL = (function (_super) {
             }
             var properties = field.properties;
             if (properties.type == Field_1.FieldType.Relation) {
-                if (properties.relation.type == Field_1.Relationship.Type.One2Many || properties.relation.type == Field_1.Relationship.Type.One2One) {
+                if (properties.relation.type == Field_1.RelationType.One2Many || properties.relation.type == Field_1.RelationType.One2One) {
                     var modelFiledList = [];
                     var filedNameList = properties.relation.model.schema.getFieldsNames();
                     var relatedModelFields = properties.relation.model.schema.getFields();
                     for (var j = 0; j < filedNameList.length; j++) {
                         if (typeof query.relations[i] == 'string' || query.relations[i]['fields'].indexOf(filedNameList[j]) >= 0) {
-                            if (relatedModelFields[filedNameList[j]].properties.type != Field_1.FieldType.Relation || relatedModelFields[filedNameList[j]].properties.relation.type != Field_1.Relationship.Type.Many2Many) {
+                            if (relatedModelFields[filedNameList[j]].properties.type != Field_1.FieldType.Relation || relatedModelFields[filedNameList[j]].properties.relation.type != Field_1.RelationType.Many2Many) {
                                 modelFiledList.push("'\"" + filedNameList[j] + "\":','\"',c." + filedNameList[j] + ",'\"'");
                             }
                         }
@@ -587,7 +586,7 @@ var MySQL = (function (_super) {
             for (var i = query.relations.length; i--;) {
                 var relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
                 var relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
-                if (relationship.type == Field_1.Relationship.Type.Many2Many) {
+                if (relationship.type == Field_1.RelationType.Many2Many) {
                     relations.push(runRelatedQuery(i));
                 }
             }
@@ -674,7 +673,7 @@ var MySQL = (function (_super) {
                 if (list[i].hasOwnProperty(key) &&
                     fields.hasOwnProperty(key) &&
                     fields[key].properties.type == Field_1.FieldType.Relation &&
-                    fields[key].properties.relation.type != Field_1.Relationship.Type.Many2Many) {
+                    fields[key].properties.relation.type != Field_1.RelationType.Many2Many) {
                     list[i][key] = this.parseJson(list[i][key]);
                 }
             }
@@ -733,7 +732,7 @@ var MySQL = (function (_super) {
         var schema = new Schema_1.Schema(name);
         schema.addField('id').primary().required();
         schema.addField('fk').type(Field_1.FieldType.Integer).required();
-        schema.addField('value').type(field.properties.itemsType).required();
+        schema.addField('value').type(field.properties.list).required();
         this.schemaList[name] = schema;
         return this.createTable(schema)();
     };
@@ -764,7 +763,7 @@ var MySQL = (function (_super) {
                         columnDefinition.push(column);
                     }
                 }
-                else if (fields[field].properties.type == Field_1.FieldType.Relation && fields[field].properties.relation.type == Field_1.Relationship.Type.Many2Many) {
+                else if (fields[field].properties.type == Field_1.FieldType.Relation && fields[field].properties.relation.type == Field_1.RelationType.Many2Many) {
                     relations.push(this.relationTable(fields[field], table));
                 }
                 else if (fields[field].properties.type == Field_1.FieldType.List) {
@@ -795,12 +794,12 @@ var MySQL = (function (_super) {
     };
     MySQL.prototype.columnDefinition = function (filed) {
         var properties = filed.properties;
-        if (properties.type == Field_1.FieldType.List || (properties.relation && properties.relation.type == Field_1.Relationship.Type.Many2Many)) {
+        if (properties.type == Field_1.FieldType.List || (properties.relation && properties.relation.type == Field_1.RelationType.Many2Many)) {
             return '';
         }
         var columnSyntax = "`" + filed.fieldName + "` " + this.getType(properties);
         var defaultValue = properties.type != Field_1.FieldType.Boolean ? "'" + properties.default + "'" : !!properties.default;
-        columnSyntax += properties.required || properties.primary ? ' NOT NULL' : '';
+        columnSyntax += (properties.required && properties.type != Field_1.FieldType.Relation) || properties.primary ? ' NOT NULL' : '';
         columnSyntax += properties.default ? " DEFAULT " + defaultValue : '';
         columnSyntax += properties.unique ? ' UNIQUE ' : '';
         columnSyntax += properties.primary ? ' AUTO_INCREMENT ' : '';
@@ -827,7 +826,7 @@ var MySQL = (function (_super) {
                 break;
             case Field_1.FieldType.Float:
             case Field_1.FieldType.Number:
-                typeSyntax = "DECIMAL(" + (properties.max ? properties.max.toString().length : 10) + ",10)";
+                typeSyntax = "DECIMAL(" + (properties.max ? properties.max.toString().length + 10 : 20) + ",10)";
                 break;
             case Field_1.FieldType.Enum:
             case Field_1.FieldType.Integer:
@@ -843,7 +842,7 @@ var MySQL = (function (_super) {
                 typeSyntax = 'BIGINT';
                 break;
             case Field_1.FieldType.Relation:
-                if (properties.relation.type == Field_1.Relationship.Type.One2One || properties.relation.type == Field_1.Relationship.Type.One2Many) {
+                if (properties.relation.type == Field_1.RelationType.One2One || properties.relation.type == Field_1.RelationType.One2Many) {
                     typeSyntax = 'BIGINT';
                 }
                 break;

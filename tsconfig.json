@@ -3,14 +3,14 @@
     "declaration": true,
     "module": "CommonJS",
     "target": "es5",
-    "outDir": "package/"
+    "outDir": "dist/"
   },
-  "files": [
+  "filesGlob": [
     "typings/tsd.d.ts",
-    "src/MySQL.ts"
+    "**/*.ts"
   ],
   "exclude": [
     "node_modules",
-    "package"
+    "dist"
   ]
 }

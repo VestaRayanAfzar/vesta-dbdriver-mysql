@@ -1,5 +1,5 @@
 "use strict";
-var MySQL_1 = require("../package/MySQL");
+var MySQL_1 = require("../src/MySQL");
 var common_1 = require("./common");
 describe('Connection Test', function () {
     var database;

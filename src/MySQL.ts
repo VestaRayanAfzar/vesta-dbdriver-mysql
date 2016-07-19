@@ -6,7 +6,7 @@ import {Err} from "vesta-util/Err";
 import {DatabaseError} from "vesta-schema/error/DatabaseError";
 import {IDeleteResult, IUpsertResult, IQueryResult} from "vesta-schema/ICRUDResult";
 import {Condition, Vql} from "vesta-schema/Vql";
-import {FieldType, Relationship, Field, IFieldProperties} from "vesta-schema/Field";
+import {FieldType, RelationType, Field, IFieldProperties} from "vesta-schema/Field";
 import {IModelFields, Model} from "vesta-schema/Model";
 
 interface ICalculatedQueryOptions {
@@ -62,26 +62,23 @@ export class MySQL extends Database {
         if (this.primaryKeys[modelName]) {
             return this.primaryKeys[modelName]
         } else {
+            var pk = 'id';
             var fields = this.schemaList[modelName].getFields();
-            for (var field in fields) {
-                if (fields.hasOwnProperty(field)) {
-                    if (fields[field].properties.primary) {
-                        this.primaryKeys[modelName] = field;
-                        return field;
-                    }
+            for (var i = 0, keys = Object.keys(fields), il = keys.length; i < il; i++) {
+                if (fields[keys[i]].properties.primary) {
+                    pk = keys[i];
+                    break;
                 }
             }
         }
-        this.primaryKeys[modelName] = 'id';
-        return 'id';
+        this.primaryKeys[modelName] = pk;
+        return pk;
     }
 
     public init():Promise<boolean> {
         var createSchemaPromise = this.initializeDatabase();
-        for (var schema in this.schemaList) {
-            if (this.schemaList.hasOwnProperty(schema)) {
-                createSchemaPromise = createSchemaPromise.then(this.createTable(this.schemaList[schema]));
-            }
+        for (var i = 0, schemaNames = Object.keys(this.schemaList), il = schemaNames.length; i < il; i++) {
+            createSchemaPromise = createSchemaPromise.then(this.createTable(this.schemaList[schemaNames[i]]));
         }
         return createSchemaPromise;
     }
@@ -98,10 +95,8 @@ export class MySQL extends Database {
 
     public findByModelValues<T>(model:string, modelValues:T, option:IQueryOption = {}):Promise < IQueryResult <T>> {
         var condition = new Condition(Condition.Operator.And);
-        for (var key in modelValues) {
-            if (modelValues.hasOwnProperty(key)) {
-                condition.append((new Condition(Condition.Operator.EqualTo)).compare(key, modelValues[key]));
-            }
+        for (var i = 0, keys = Object.keys(modelValues), il = keys.length; i < il; i++) {
+            condition.append((new Condition(Condition.Operator.EqualTo)).compare(keys[i], modelValues[keys[i]]));
         }
         var query = new Vql(model);
         if (option.fields) query.select(...option.fields);
@@ -186,15 +181,15 @@ export class MySQL extends Database {
 
     private addList<T>(model:T, list:string, value:Array<any>):Promise<any> {
         var modelName = model['schema'].name;
+        if (!value || !value.length) {
+            return Promise.resolve([]);
+        }
         var values = value.reduce((prev, value, index, items)=> {
             var result = prev;
             result += `(${model[this.pk(modelName)]} , ${this.escape(value)})`;
             if (index < items.length - 1) result += ',';
             return result
         }, '');
-        if (!value) {
-            return Promise.resolve([]);
-        }
         var table = modelName + this.pascalCase(list) + 'List';
         return this.query(`INSERT INTO ${table} (\`fk\`,\`value\`) VALUES ${values}`)
 
@@ -206,7 +201,7 @@ export class MySQL extends Database {
         var fieldsName = [];
         var insertList = [];
         for (var field in fields) {
-            if (fields.hasOwnProperty(field) && fields[field].properties.type != FieldType.Relation || fields[field].properties.relation.type != Relationship.Type.Many2Many) {
+            if (fields.hasOwnProperty(field) && fields[field].properties.type != FieldType.Relation || fields[field].properties.relation.type != RelationType.Many2Many) {
                 fieldsName.push(field);
             }
         }
@@ -224,7 +219,7 @@ export class MySQL extends Database {
             return Promise.resolve(result);
         }
 
-        return this.query<Array<T>>(`INSERT INTO ${model}} (${fieldsName.join(',')}) VALUES ${insertList.join(',')}`)
+        return this.query<Array<T>>(`INSERT INTO ${model} (${fieldsName.join(',')}) VALUES ${insertList.join(',')}`)
             .then(insertResult=> {
                 result.items = insertResult;
                 return result;
@@ -240,7 +235,7 @@ export class MySQL extends Database {
         var modelName = model.constructor['schema'].name;
         var fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation && value) {
-            if (fields[relation].properties.relation.type != Relationship.Type.Many2Many) {
+            if (fields[relation].properties.relation.type != RelationType.Many2Many) {
                 return this.addOneToManyRelation<T,M>(model, relation, value)
             } else {
                 return this.addManyToManyRelation<T,M>(model, relation, value)
@@ -266,7 +261,7 @@ export class MySQL extends Database {
         }
         var fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation) {
-            if (fields[relation].properties.relation.type != Relationship.Type.Many2Many) {
+            if (fields[relation].properties.relation.type != RelationType.Many2Many) {
                 return this.removeOneToManyRelation(model, relation)
             } else {
                 return this.removeManyToManyRelation(model, relation, safeCondition)
@@ -311,7 +306,7 @@ export class MySQL extends Database {
             let relationValue = analysedValue.relations[relation];
             // todo check if it is required
             if (!relationValue) continue;
-            if (modelFields[relation].properties.relation.type == Relationship.Type.Many2Many) {
+            if (modelFields[relation].properties.relation.type == RelationType.Many2Many) {
                 steps.push(this.updateRelations(new this.models[model](value), relation, relationValue));
             } else {
                 let fk = +relationValue;
@@ -460,14 +455,16 @@ export class MySQL extends Database {
         var modelFields = this.schemaList[query.model].getFields();
         if (query.fields && query.fields.length) {
             for (var i = 0; i < query.fields.length; i++) {
+                if (modelFields[query.fields[i]] && modelFields[query.fields[i]].properties.type == FieldType.List) continue;
                 fields.push(`\`${alias}\`.${query.fields[i]}`)
             }
         } else {
             for (var key in modelFields) {
                 if (modelFields.hasOwnProperty(key)) {
+                    if (modelFields[key].properties.type == FieldType.List) continue;
                     if (modelFields[key].properties.type != FieldType.Relation) {
                         fields.push(`\`${alias}\`.${modelFields[key].fieldName}`);
-                    } else if ((!query.relations || query.relations.indexOf(modelFields[key].fieldName) < 0) && modelFields[key].properties.relation.type != Relationship.Type.Many2Many) {
+                    } else if ((!query.relations || query.relations.indexOf(modelFields[key].fieldName) < 0) && modelFields[key].properties.relation.type != RelationType.Many2Many) {
                         fields.push(`\`${alias}\`.${modelFields[key].fieldName}`);
                     }
                 }
@@ -482,14 +479,14 @@ export class MySQL extends Database {
             }
             var properties = field.properties;
             if (properties.type == FieldType.Relation) {
-                if (properties.relation.type == Relationship.Type.One2Many || properties.relation.type == Relationship.Type.One2One) {
+                if (properties.relation.type == RelationType.One2Many || properties.relation.type == RelationType.One2One) {
                     var modelFiledList = [];
                     var filedNameList = properties.relation.model.schema.getFieldsNames();
                     var relatedModelFields = properties.relation.model.schema.getFields();
                     for (var j = 0; j < filedNameList.length; j++) {
 
                         if (typeof query.relations[i] == 'string' || query.relations[i]['fields'].indexOf(filedNameList[j]) >= 0) {
-                            if (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation || relatedModelFields[filedNameList[j]].properties.relation.type != Relationship.Type.Many2Many) {
+                            if (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation || relatedModelFields[filedNameList[j]].properties.relation.type != RelationType.Many2Many) {
                                 modelFiledList.push(`'"${filedNameList[j]}":','"',c.${filedNameList[j]},'"'`)
                             }
                         }
@@ -598,7 +595,7 @@ export class MySQL extends Database {
             for (var i = query.relations.length; i--;) {
                 var relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
                 var relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
-                if (relationship.type == Relationship.Type.Many2Many) {
+                if (relationship.type == RelationType.Many2Many) {
                     relations.push(runRelatedQuery(i))
                 }
             }
@@ -688,7 +685,7 @@ export class MySQL extends Database {
                 if (list[i].hasOwnProperty(key) &&
                     fields.hasOwnProperty(key) &&
                     fields[key].properties.type == FieldType.Relation &&
-                    fields[key].properties.relation.type != Relationship.Type.Many2Many) {
+                    fields[key].properties.relation.type != RelationType.Many2Many) {
                     list[i][key] = this.parseJson(list[i][key]);
                 }
             }
@@ -752,7 +749,7 @@ export class MySQL extends Database {
         var schema = new Schema(name);
         schema.addField('id').primary().required();
         schema.addField('fk').type(FieldType.Integer).required();
-        schema.addField('value').type(field.properties.itemsType).required();
+        schema.addField('value').type(field.properties.list).required();
         this.schemaList[name] = schema;
         return this.createTable(schema)();
     }
@@ -784,7 +781,7 @@ export class MySQL extends Database {
                     } else {
                         columnDefinition.push(column);
                     }
-                } else if (fields[field].properties.type == FieldType.Relation && fields[field].properties.relation.type == Relationship.Type.Many2Many) {
+                } else if (fields[field].properties.type == FieldType.Relation && fields[field].properties.relation.type == RelationType.Many2Many) {
                     relations.push(this.relationTable(fields[field], table));
                 } else if (fields[field].properties.type == FieldType.List) {
                     relations.push(this.listTable(fields[field], table));
@@ -818,12 +815,12 @@ export class MySQL extends Database {
 
     private columnDefinition(filed:Field) {
         var properties = filed.properties;
-        if (properties.type == FieldType.List || (properties.relation && properties.relation.type == Relationship.Type.Many2Many)) {
+        if (properties.type == FieldType.List || (properties.relation && properties.relation.type == RelationType.Many2Many)) {
             return '';
         }
         var columnSyntax = `\`${filed.fieldName}\` ${this.getType(properties)}`;
         var defaultValue = properties.type != FieldType.Boolean ? `'${properties.default}'` : !!properties.default;
-        columnSyntax += properties.required || properties.primary ? ' NOT NULL' : '';
+        columnSyntax += (properties.required && properties.type != FieldType.Relation) || properties.primary ? ' NOT NULL' : '';
         columnSyntax += properties.default ? ` DEFAULT ${defaultValue}` : '';
         columnSyntax += properties.unique ? ' UNIQUE ' : '';
         columnSyntax += properties.primary ? ' AUTO_INCREMENT ' : '';
@@ -850,7 +847,7 @@ export class MySQL extends Database {
                 break;
             case FieldType.Float:
             case FieldType.Number:
-                typeSyntax = `DECIMAL(${properties.max ? properties.max.toString().length : 10},10)`;
+                typeSyntax = `DECIMAL(${properties.max ? properties.max.toString().length + 10 : 20},10)`;
                 break;
             case FieldType.Enum:
             case FieldType.Integer:
@@ -866,7 +863,7 @@ export class MySQL extends Database {
                 typeSyntax = 'BIGINT';
                 break;
             case FieldType.Relation:
-                if (properties.relation.type == Relationship.Type.One2One || properties.relation.type == Relationship.Type.One2Many) {
+                if (properties.relation.type == RelationType.One2One || properties.relation.type == RelationType.One2Many) {
                     typeSyntax = 'BIGINT';
                 }
                 break;

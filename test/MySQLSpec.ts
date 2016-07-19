@@ -1,4 +1,4 @@
-import {MySQL} from "../package/MySQL";
+import {MySQL} from "../src/MySQL";
 import {config, models} from "./common";
 
 describe('Connection Test', function () {

@@ -11,7 +11,7 @@
     "Schema"
   ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node node_modules/jasmine-node/bin/jasmine-node dist/test --autotest --watch dist/ --color --verbose",
     "dev": "tsc -w -p ."
   },
   "author": "hbtb <bishehsary@gmail.com>",
@@ -34,7 +34,7 @@
     "jasmine-core": "^2.4.1",
     "jasmine-node": "^1.14.5",
     "mysql": "^2.10.2",
-    "vesta-schema": "^0.3.16",
+    "vesta-schema": "^0.4.3",
     "vesta-util": "^0.2.7"
   },
   "devDependencies": {}
