@@ -207,7 +207,7 @@ export class MySQL extends Database {
         }
         for (var i = value.length; i--;) {
             var insertPart = [];
-            for (var j = fieldsName.length; j--;) {
+            for (var j = 0, jl = fieldsName.length; j < jl; j++) {
                 insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? this.escape(value[i][fieldsName[j]]) : '\'\'');
             }
             insertList.push(`(${insertPart.join(',')})`)
@@ -487,7 +487,7 @@ export class MySQL extends Database {
 
                         if (typeof query.relations[i] == 'string' || query.relations[i]['fields'].indexOf(filedNameList[j]) >= 0) {
                             if (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation || relatedModelFields[filedNameList[j]].properties.relation.type != RelationType.Many2Many) {
-                                modelFiledList.push(`'"${filedNameList[j]}":','"',c.${filedNameList[j]},'"'`)
+                                modelFiledList.push(`'"${filedNameList[j]}":','"',COALESCE(c.${filedNameList[j]},''),'"'`)
                             }
                         }
                     }
@@ -669,7 +669,7 @@ export class MySQL extends Database {
                     var listName = data[i].name;
                     var listData = data[i].data;
                     for (var k = listData.length; k--;) {
-                        let id = list[k]['fk'];
+                        let id = listData[k]['fk'];
                         listJson[id][listName] = listJson[id][listName] || [];
                         listJson[id][listName].push(listData[k]['value']);
                     }
@@ -737,7 +737,7 @@ export class MySQL extends Database {
     private relationTable(field:Field, table:string):Promise < any > {
         var name = table + 'Has' + this.pascalCase(field.fieldName);
         var schema = new Schema(name);
-        schema.addField('id').primary().required();
+        schema.addField('id').primary().type(FieldType.Integer).required();
         schema.addField(this.camelCase(table)).type(FieldType.Integer).required();
         schema.addField(this.camelCase(field.properties.relation.model.schema.name)).type(FieldType.Integer).required();
         this.schemaList[name] = schema;
@@ -747,7 +747,7 @@ export class MySQL extends Database {
     private listTable(field:Field, table:string):Promise < any > {
         var name = table + this.pascalCase(field.fieldName) + 'List';
         var schema = new Schema(name);
-        schema.addField('id').primary().required();
+        schema.addField('id').primary().type(FieldType.Integer).required();
         schema.addField('fk').type(FieldType.Integer).required();
         schema.addField('value').type(field.properties.list).required();
         this.schemaList[name] = schema;

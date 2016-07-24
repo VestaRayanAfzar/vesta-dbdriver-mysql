@@ -17,6 +17,5 @@ export class SQLBuilder {
     }
 
     public where(condition:Condition) {
-        this.condition = 
     }
 }
