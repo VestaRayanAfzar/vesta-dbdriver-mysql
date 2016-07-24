@@ -2,7 +2,6 @@
 tsd-debug.*
 npm-debug.*
 /node_modules
-/package/*.js
-/package/*.d.ts
-/package/test
 /typings
+/dist/**/*.js
+/dist/**/*.d.ts
