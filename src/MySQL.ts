@@ -17,13 +17,19 @@ interface ICalculatedQueryOptions {
     join:string,
 }
 
+export interface IMySQLConfig extends IDatabaseConfig {
+    charset:string,
+    collate:string
+}
+
 export class MySQL extends Database {
     private pool:IPool;
     private connection:IConnection;
     private schemaList:ISchemaList = {};
-    private config:IDatabaseConfig;
+    private config:IMySQLConfig;
     private models:IModelCollection;
     private primaryKeys:{[name:string]:string} = {};
+    private transactions:{[key:number]:IConnection};
 
     public connect(force = false):Promise<Database> {
         if (this.connection && !force) return Promise.resolve(this);
@@ -34,7 +40,8 @@ export class MySQL extends Database {
                     port: +this.config.port,
                     user: this.config.user,
                     password: this.config.password,
-                    database: this.config.database
+                    database: this.config.database,
+                    charset: this.config.collate,
                 });
             }
             this.pool.getConnection((err, connection)=> {
@@ -45,7 +52,16 @@ export class MySQL extends Database {
         })
     }
 
-    constructor(config:IDatabaseConfig, models:IModelCollection) {
+    private getConnection():Promise<IConnection> {
+        return new Promise<IConnection>((resolve, reject)=> {
+            this.pool.getConnection((err, connection)=> {
+                if (err) return reject(new DatabaseError(Err.Code.DBConnection, err && err.message));
+                resolve(connection);
+            });
+        })
+    }
+
+    constructor(config:IMySQLConfig, models:IModelCollection) {
         super();
         this.schemaList = {};
         for (var model in models) {
@@ -56,6 +72,8 @@ export class MySQL extends Database {
         }
         this.models = models;
         this.config = config;
+        this.config.charset = this.config.charset || 'utf8mb4';
+        this.config.collate = this.config.collate || 'utf8mb4_unicode_ci'
     }
 
     private pk(modelName):string {
@@ -113,12 +131,8 @@ export class MySQL extends Database {
         var result:IQueryResult<T> = <IQueryResult<T>>{};
         params.condition = params.condition ? 'WHERE ' + params.condition : '';
         params.orderBy = params.orderBy ? 'ORDER BY ' + params.orderBy : '';
-        var totalPromise = this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.join} ${params.condition}`);
-        var itemsPromise = this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.join} ${params.condition} ${params.orderBy} ${params.limit}`);
-        return Promise.all([totalPromise, itemsPromise])
-            .then(data=> {
-                var list = <T[]>data[1];
-                result.total = data[0][0]['total'];
+        return this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.join} ${params.condition} ${params.orderBy} ${params.limit}`)
+            .then(list=> {
                 return Promise.all([
                     this.getManyToManyRelation(list, query),
                     this.getLists(list, query)
@@ -135,6 +149,43 @@ export class MySQL extends Database {
                 }
             })
     }
+
+    public count<T>(model:string, modelValues:T, option?:IQueryOption):Promise <IQueryResult<T>>
+    public count<T>(query:Vql):Promise <IQueryResult<T>>
+    public count<T>(arg1:string|Vql, modelValues?:T, option?:IQueryOption):Promise <IQueryResult<T>> {
+        if ('string' == typeof arg1) {
+            return this.countByModelValues(<string>arg1, modelValues, option);
+        } else {
+            return this.countByQuery(<Vql>arg1);
+        }
+    }
+
+    private countByModelValues<T>(model:string, modelValues:T, option:IQueryOption = {}):Promise <IQueryResult<T>> {
+        var condition = new Condition(Condition.Operator.And);
+        for (var i = 0, keys = Object.keys(modelValues), il = keys.length; i < il; i++) {
+            condition.append((new Condition(Condition.Operator.EqualTo)).compare(keys[i], modelValues[keys[i]]));
+        }
+        var query = new Vql(model);
+        if (option.fields) query.select(...option.fields);
+        if (option.offset || option.page) query.fromOffset(option.offset ? option.offset : (option.page - 1) * option.limit);
+        if (option.relations) query.fetchRecordFor(...option.relations);
+        if (+option.limit) query.limitTo(option.limit);
+        query.where(condition);
+        query.orderBy = option.orderBy || [];
+        return this.countByQuery(query);
+    }
+
+    public countByQuery<T>(query:Vql):Promise <IQueryResult<T>> {
+        var result:IQueryResult<T> = <IQueryResult<T>>{};
+        var params:ICalculatedQueryOptions = this.getQueryParams(query);
+        params.condition = params.condition ? 'WHERE ' + params.condition : '';
+        return this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.join} ${params.condition}`)
+            .then(data=> {
+                result.total = data[0]['total'];
+                return result;
+            })
+    }
+
 
     public insertOne<T>(model:string, value:T):Promise < IUpsertResult <T>> {
         var result:IUpsertResult<T> = <IUpsertResult<T>>{};
@@ -231,7 +282,7 @@ export class MySQL extends Database {
 
     }
 
-    public addRelation<T,M>(model:T, relation:string, value:number|Array<number>|M|Array<M>):Promise<IUpsertResult<M>> {
+    private addRelation<T,M>(model:T, relation:string, value:number|Array<number>|M|Array<M>):Promise<IUpsertResult<M>> {
         var modelName = model.constructor['schema'].name;
         var fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation && value) {
@@ -244,7 +295,7 @@ export class MySQL extends Database {
         return Promise.reject(new Err(Err.Code.DBInsert, 'error in adding relation'));
     }
 
-    public removeRelation<T>(model:T, relation:string, condition?:Condition|number|Array<number>):Promise<any> {
+    private removeRelation<T>(model:T, relation:string, condition?:Condition|number|Array<number>):Promise<any> {
         var modelName = model.constructor['schema'].name;
         var relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         var safeCondition:Condition;
@@ -718,14 +769,14 @@ export class MySQL extends Database {
         var ownTablePromise =
             this.query(`DROP TABLE IF EXISTS \`${schema.name}\``)
                 .then(()=> {
-                    return this.query(`CREATE TABLE \`${schema.name}\` (\n${createDefinition.ownColumn})\n ENGINE=InnoDB DEFAULT CHARSET=utf8`)
+                    return this.query(`CREATE TABLE \`${schema.name}\` (\n${createDefinition.ownColumn})\n ENGINE=InnoDB`)
                 });
         var translateTablePromise = Promise.resolve(true);
         if (createDefinition.lingualColumn) {
             translateTablePromise =
                 this.query(`DROP TABLE IF EXISTS ${schema.name}_translation`)
                     .then(()=> {
-                        return this.query(`CREATE TABLE ${schema.name}_translation (\n${createDefinition.lingualColumn}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8`)
+                        return this.query(`CREATE TABLE ${schema.name}_translation (\n${createDefinition.lingualColumn}\n) ENGINE=InnoDB`)
                     });
         }
 
@@ -831,7 +882,7 @@ export class MySQL extends Database {
         var typeSyntax;
         switch (properties.type) {
             case FieldType.Boolean:
-                typeSyntax = "TINYINT(1)";
+                typeSyntax = "BOOLEAN";
                 break;
             case FieldType.EMail:
             case FieldType.File:
@@ -873,7 +924,7 @@ export class MySQL extends Database {
     }
 
     private initializeDatabase() {
-        return this.query(`ALTER DATABASE \`${this.config.database}\`  CHARSET = utf8 COLLATE = utf8_general_ci;`);
+        return this.query(`ALTER DATABASE \`${this.config.database}\`  CHARSET = ${this.config.charset} COLLATE = ${this.config.collate};`);
     }
 
     private getOperatorSymbol(operator:number):string {
@@ -1082,7 +1133,7 @@ export class MySQL extends Database {
             });
     }
 
-    public escape(value) {
+    private escape(value) {
         if (typeof value == 'number') return value;
         if (typeof value == 'boolean') return value ? 1 : 0;
         return this.connection.escape(value);
@@ -1090,29 +1141,29 @@ export class MySQL extends Database {
 
     public query<T>(query:string):Promise<T> {
         return new Promise((resolve, reject)=> {
-            this.connection.query(query, (err, result)=> {
-                if (err && err.fatal) {
-                    this.close().then(()=>this.connect(true).then(()=>reject(err))).catch(()=>reject(err));
-                }
-                else if (err) {
-                    return reject(err);
-                } else {
-                    resolve(<T>result);
-                }
+            this.getConnection().then(connection=> {
+                connection.query(query, (err, result)=> {
+                    connection.release();
+                    if (err && err.fatal) {
+                        this.close(connection).then(()=>reject(err)).catch(()=>reject(err));
+                    }
+                    else if (err) {
+                        return reject(err);
+                    } else {
+                        resolve(<T>result);
+                    }
+                })
             })
+
         })
     }
 
-    public close(destroy = false):Promise<boolean> {
+    public close(connection:IConnection):Promise<boolean> {
         return new Promise((resolve, reject)=> {
-            if (this.connection) {
-                this.connection.end((err)=> {
+            if (connection) {
+                connection.end((err)=> {
                     if (err) {
-                        if (destroy) {
-                            this.connection.destroy();
-                            return resolve(true);
-                        }
-                        return reject(err)
+                        connection.destroy();
                     }
                     resolve(true);
                 })
