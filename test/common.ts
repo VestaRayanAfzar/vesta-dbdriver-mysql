@@ -1,10 +1,11 @@
-import {IDatabaseConfig, IModelCollection} from "vesta-schema/Database";
+import {IModelCollection} from "vesta-schema/Database";
 import {User} from "./models/User";
 import {Role} from "./models/Role";
 import {RoleGroup} from "./models/RoleGroup";
 import {Permission} from "./models/Permission";
+import {IMySQLConfig} from "../dist/src/MySQL";
 
-export var config = <IDatabaseConfig>{
+export var config = <IMySQLConfig>{
     protocol: 'mysql',
     host: 'mysql',
     port: 3306,
