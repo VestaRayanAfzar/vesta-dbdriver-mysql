@@ -356,7 +356,7 @@ export class MySQL extends Database {
         var result: IUpsertResult<T> = <IUpsertResult<T>>{};
         var analysedValue = this.getAnalysedValue<T>(model, value);
         var properties = [];
-        for (var i = analysedValue.properties.length; i--;) {
+        for (let i = analysedValue.properties.length; i--;) {
             if (analysedValue.properties[i].field != this.pk(model)) {
                 properties.push(`\`${analysedValue.properties[i].field}\` = ${analysedValue.properties[i].value}`);
             }
@@ -365,7 +365,7 @@ export class MySQL extends Database {
         var steps = [];
         var relationsNames = Object.keys(analysedValue.relations);
         var modelFields = this.schemaList[model].getFields();
-        for (var i = relationsNames.length; i--;) {
+        for (let i = relationsNames.length; i--;) {
             let relation = relationsNames[i];
             let relationValue = analysedValue.relations[relation];
             // todo check if it is required
@@ -394,7 +394,7 @@ export class MySQL extends Database {
         }
 
         return Promise.all(steps)
-            .then(()=>this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ${id}`))
+            .then(()=> properties.length ? this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ${id}`) : true)
             .then(()=>this.findById(model, id))
             .catch(err=> {
                 result.error = new Err(Err.Code.DBQuery, err && err.message);
@@ -437,11 +437,13 @@ export class MySQL extends Database {
     public deleteOne(model: string, id: number | string): Promise < IDeleteResult > {
         var result: IDeleteResult = <IDeleteResult>{};
         var fields = this.schemaList[model].getFields();
-        return this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} = ${id}`)
+        return this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} = ${this.escape(id)}`)
             .then(deleteResult=> {
+                let instance = new this.models[model]();
+                instance[this.pk(model)] = id;
                 for (var field in this.schemaList[model].getFields()) {
                     if (fields.hasOwnProperty(field) && fields[field].properties.type == FieldType.Relation) {
-                        this.removeRelation(model, field, 0)
+                        this.removeRelation(instance, field, 0)
                     }
                 }
                 result.items = [id];
@@ -676,10 +678,11 @@ export class MySQL extends Database {
         return Promise.all(relations)
             .then((data)=> {
                 var leftKey = this.camelCase(query.model);
-                var rightKey = this.camelCase(relationship.model.schema.name);
                 for (var i = data.length; i--;) {
                     for (var related in data[i]) {
                         if (data[i].hasOwnProperty(related)) {
+                            let relationship = this.schemaList[query.model].getFields()[related].properties.relation;
+                            let rightKey = this.camelCase(relationship.model.schema.name);
                             for (var k = list.length; k--;) {
                                 var id = list[k][this.pk(query.model)];
                                 list[k][related] = [];
@@ -743,10 +746,11 @@ export class MySQL extends Database {
         return Promise.all(relations)
             .then(data=> {
                 var leftKey = this.camelCase(query.model);
-                var rightKey = this.camelCase(relationship.model.schema.name);
                 for (var i = data.length; i--;) {
                     for (var related in data[i]) {
                         if (data[i].hasOwnProperty(related)) {
+                            let relationship = this.schemaList[query.model].getFields()[related].properties.relation;
+                            let rightKey = this.camelCase(relationship.model.schema.name);
                             for (var k = list.length; k--;) {
                                 var id = list[k][this.pk(query.model)];
                                 list[k][related] = [];
@@ -1153,7 +1157,7 @@ export class MySQL extends Database {
         }
         return preparePromise
             .then(()=> {
-                return this.query<any>(`UPDATE \`${model}\` SET ${relation} = 0 WHERE ${this.pk(modelName)} = ${this.escape(model[this.pk(modelName)])}`)
+                return this.query<any>(`UPDATE \`${modelName}\` SET ${relation} = 0 WHERE ${this.pk(modelName)} = ${this.escape(model[this.pk(modelName)])}`)
                     .then(updateResult=> {
                         result.items = updateResult;
                         return result;
@@ -1193,7 +1197,7 @@ export class MySQL extends Database {
                     conditions.push('FALSE');
                 }
                 conditionsStr = conditions.length ? ` AND ${conditions.join(' OR ')}` : '';
-                return this.query<Array<any>>(`SELECT * FROM ${model + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model[this.pk(modelName)]} ${conditionsStr}`)
+                return this.query<Array<any>>(`SELECT * FROM ${modelName + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model[this.pk(modelName)]} ${conditionsStr}`)
                     .then(items=> {
                         var ids: Array<number> = [];
                         for (var i = items.length; i--;) {
@@ -1211,7 +1215,7 @@ export class MySQL extends Database {
                     condition.append(new Condition(Condition.Operator.EqualTo).compare('id', ids[i]));
                 }
                 var idCondition = ids.length ? `(${ids.join(' OR ')})` : 'FALSE';
-                return this.query(`DELETE FROM ${model + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model[this.pk(modelName)]} AND ${idCondition}}`)
+                return this.query(`DELETE FROM ${modelName + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ${model[this.pk(modelName)]} AND ${idCondition}`)
                     .then(()=> {
                         var result = {items: ids};
                         if (isWeek && ids.length) {
