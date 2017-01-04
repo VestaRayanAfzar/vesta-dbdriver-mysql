@@ -34,8 +34,8 @@
     "jasmine-core": "^2.4.1",
     "jasmine-node": "^1.14.5",
     "mysql": "^2.11.1",
-    "vesta-schema": "^0.5.0",
-    "vesta-util": "^0.2.7"
+    "vesta-schema": "^0.5.9-beta.1",
+    "vesta-util": "^0.2.8"
   },
   "devDependencies": {}
 }

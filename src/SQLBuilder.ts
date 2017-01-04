@@ -1,8 +1,8 @@
 import {Condition} from "vesta-schema/Vql";
 export enum QueryType{Select = 1, Update, Delete, Insert}
 export class SQLBuilder {
-    private selects:Array = [];
-    private froms:Array = [];
+    private selects:Array<any> = [];
+    private froms:Array<any> = [];
     private condition:string;
 
     constructor(private type:QueryType) {
