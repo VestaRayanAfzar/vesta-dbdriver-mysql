@@ -511,7 +511,7 @@ export class MySQL extends Database {
                 } else if (schemaFields[key].properties.type == FieldType.List) {
                     lists[key] = value[key]
                 } else {
-                    let thisValue: string|number = schemaFields[key].properties.type == FieldType.Object ? JSON.stringify(value[key]) : `${this.escape(value[key])}`;
+                    let thisValue: string|number = schemaFields[key].properties.type == FieldType.Object ? `'${JSON.stringify(value[key])}'` : `'${this.escape(value[key])}'`;
                     properties.push({field: key, value: thisValue})
                 }
             }
@@ -1026,8 +1026,6 @@ export class MySQL extends Database {
                 typeSyntax = `INT(${properties.max ? properties.max.toString(2).length : 20})`;
                 break;
             case FieldType.Object:
-                typeSyntax = `BLOB`;
-                break;
             case FieldType.Text:
                 typeSyntax = `TEXT`;
                 break;
