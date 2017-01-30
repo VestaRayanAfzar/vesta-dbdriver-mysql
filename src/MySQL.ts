@@ -511,7 +511,7 @@ export class MySQL extends Database {
                 } else if (schemaFields[key].properties.type == FieldType.List) {
                     lists[key] = value[key]
                 } else {
-                    let thisValue: string|number = schemaFields[key].properties.type == FieldType.Object ? `'${JSON.stringify(value[key])}'` : `'${this.escape(value[key])}'`;
+                    let thisValue: string|number = schemaFields[key].properties.type == FieldType.Object ? `${this.escape(JSON.stringify(value[key]))}` : `${this.escape(value[key])}`;
                     properties.push({field: key, value: thisValue})
                 }
             }
@@ -644,10 +644,10 @@ export class MySQL extends Database {
     private getCondition(model: string, condition: Condition) {
         model = condition.model || model;
         let operator = this.getOperatorSymbol(condition.operator);
-        if (!this.models[model].schema.getField(condition.comparison.field)) {
-            return '';
-        }
         if (!condition.isConnector) {
+            if (!this.models[model].schema.getField(condition.comparison.field)) {
+                return '';
+            }
             if (condition.comparison.isValueOfTypeField && !this.models[model].schema.getField(condition.comparison.value)) {
                 return '';
             }
@@ -1070,6 +1070,10 @@ export class MySQL extends Database {
                 return 'LIKE';
             case Condition.Operator.NotLike:
                 return 'NOT LIKE';
+            case Condition.Operator.Regex:
+                return 'REGEXP';
+            case Condition.Operator.NotRegex:
+                return 'NOT REGEXP';
         }
     }
 
