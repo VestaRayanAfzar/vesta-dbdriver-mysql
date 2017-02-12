@@ -13,8 +13,10 @@ interface ICalculatedQueryOptions {
     limit: string,
     orderBy: string,
     fields: string,
+    fieldsList: Array<string>,
     condition: string,
     join: string,
+
 }
 
 export interface IMySQLConfig extends IDatabaseConfig {
@@ -542,7 +544,10 @@ export class MySQL extends Database {
         let modelFields = this.schemaList[query.model].getFields();
         if (query.fields && query.fields.length) {
             for (let i = 0; i < query.fields.length; i++) {
-                if (modelFields[query.fields[i]]) {
+                if (query.fields[i] instanceof Vql) {
+                    fields.push(this.getSubQuery(<Vql>query.fields[i]));
+                }
+                else if (modelFields[query.fields[i]]) {
                     if (modelFields[query.fields[i]].properties.type == FieldType.List) continue;
                     fields.push(`\`${alias}\`.${query.fields[i]}`)
                 }
@@ -636,7 +641,23 @@ export class MySQL extends Database {
             params.join = joins.join('\n');
         }
         params.fields = fields.join(',');
+        params.fieldsList = fields;
         return params;
+    }
+
+    private getSubQuery<T>(query: Vql) {
+        query.relations = []; //relations not handle in next version;
+        query.joins = [];
+        let params: ICalculatedQueryOptions = this.getQueryParams(query, query.model);
+        params.condition = params.condition ? 'WHERE ' + params.condition : '';
+        params.orderBy = params.orderBy ? 'ORDER BY ' + params.orderBy : '';
+        let modelFiledList = [];
+        for (let i = 0, il = params.fieldsList.length; i < il; i++) {
+            let field = params.fieldsList[i].replace(`\`${query.model}\`.`, '');
+            modelFiledList.push(`'"${field}":','"',COALESCE(${field},''),'"'`)
+        }
+        let modelAs = query.model[0].toLowerCase() + query.model.substr(1,query.model.length - 1);
+        return `(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${query.model}\` ${params.condition} ${params.orderBy} limit 1) as ${modelAs}`;
     }
 
     private getCondition(model: string, condition: Condition) {
@@ -646,10 +667,7 @@ export class MySQL extends Database {
             if (!this.models[model].schema.getField(condition.comparison.field)) {
                 return '';
             }
-            if (condition.comparison.isValueOfTypeField && !this.models[model].schema.getField(condition.comparison.value)) {
-                return '';
-            }
-            return `(\`${model}\`.${condition.comparison.field} ${operator} ${condition.comparison.isValueOfTypeField ? `\`${model}\`.${condition.comparison.value}` : `${this.escape(condition.comparison.value)}`})`;
+            return `(\`${model}\`.${condition.comparison.field} ${operator} ${condition.comparison.isValueOfTypeField ? condition.comparison.value : `${this.escape(condition.comparison.value)}`})`;
         } else {
             let childrenCondition = [];
             for (let i = 0; i < condition.children.length; i++) {
@@ -857,6 +875,12 @@ export class MySQL extends Database {
                     (fields[key].properties.relation.type == RelationType.One2Many
                     || fields[key].properties.relation.type == RelationType.One2One)))) {
                     list[i][key] = this.parseJson(list[i][key]);
+                } else if (list[i].hasOwnProperty(key) && !fields.hasOwnProperty(key)) {
+                    try {
+                        list[i][key] = this.parseJson(list[i][key]);
+                    }
+                    catch (e) {
+                    }
                 }
             }
         }
