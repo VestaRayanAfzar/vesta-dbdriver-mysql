@@ -47,7 +47,7 @@ export class MySQL extends Database {
                 });
             }
             this.pool.getConnection((err, connection) => {
-                if (err) return reject(new DatabaseError(Err.Code.DBConnection, err && err.message));
+                if (err) return reject(new DatabaseError(Err.Code.DBConnection, err));
                 this.connection = connection;
                 resolve(this);
             });
@@ -57,7 +57,7 @@ export class MySQL extends Database {
     private getConnection(): Promise<IConnection> {
         return new Promise<IConnection>((resolve, reject) => {
             this.pool.getConnection((err, connection) => {
-                if (err) return reject(new DatabaseError(Err.Code.DBConnection, err && err.message));
+                if (err) return reject(new DatabaseError(Err.Code.DBConnection, err));
                 resolve(connection);
             });
         })
@@ -79,10 +79,10 @@ export class MySQL extends Database {
     }
 
     private pk(modelName): string {
+        let pk = 'id';
         if (this.primaryKeys[modelName]) {
             return this.primaryKeys[modelName]
         } else {
-            let pk = 'id';
             let fields = this.schemaList[modelName].getFields();
             for (let i = 0, keys = Object.keys(fields), il = keys.length; i < il; i++) {
                 if (fields[keys[i]].properties.primary) {
@@ -147,8 +147,7 @@ export class MySQL extends Database {
             })
             .catch(err => {
                 if (err) {
-                    result.error = new Err(Err.Code.DBQuery, err && err.message);
-                    return Promise.reject(result);
+                    return Promise.reject( new DatabaseError(Err.Code.DBQuery, err));
                 }
             })
     }
@@ -656,7 +655,7 @@ export class MySQL extends Database {
             let field = params.fieldsList[i].replace(`\`${query.model}\`.`, '');
             modelFiledList.push(`'"${field}":','"',COALESCE(${field},''),'"'`)
         }
-        let modelAs = query.model[0].toLowerCase() + query.model.substr(1,query.model.length - 1);
+        let modelAs = query.model[0].toLowerCase() + query.model.substr(1, query.model.length - 1);
         return `(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${query.model}\` ${params.condition} ${params.orderBy} limit 1) as ${modelAs}`;
     }
 
@@ -749,30 +748,7 @@ export class MySQL extends Database {
 
     private getManyToManyRelation(list: Array < any >, query: Vql) {
         let ids = [];
-        let runRelatedQuery = (i) => {
-            let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
-            let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
-            let fields = '*';
-            if (typeof query.relations[i] != 'string') {
-                for (let j = query.relations[i]['fields'].length; j--;) {
-                    query.relations[i]['fields'][j] = `m.${query.relations[i]['fields'][j]}`;
-                }
-                fields = query.relations[i]['fields'].join(',');
-            }
-            let leftKey = this.camelCase(query.model);
-            let rightKey = this.camelCase(relationship.model.schema.name);
-            return this.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
-                LEFT JOIN \`${query.model + 'Has' + this.pascalCase(relationName)}\` r 
-                ON (m.${this.pk(relationship.model.schema.name)} = r.${rightKey}) 
-                WHERE r.${leftKey} IN (?)`, [ids])
-                .then(relatedList => {
-                    let result = {};
-                    result[relationName] = relatedList;
-                    return result;
-                })
 
-
-        };
         for (let i = list.length; i--;) {
             ids.push(list[i][this.pk(query.model)]);
         }
@@ -780,9 +756,18 @@ export class MySQL extends Database {
         if (ids.length && query.relations && query.relations.length) {
             for (let i = query.relations.length; i--;) {
                 let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
-                let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
+                let field = this.schemaList[query.model].getFields()[relationName];
+                let relationship = field.properties.relation;
                 if (relationship.type == RelationType.Many2Many) {
-                    relations.push(runRelatedQuery(i))
+                    relations.push(this.runRelatedQuery(query, i, ids))
+                } else if (relationship.type == RelationType.Inverse) {
+                    let inverseField = this.getInverseRelation(query, field);
+                    if (inverseField.properties.relation.type == RelationType.One2Many || inverseField.properties.relation.type == RelationType.One2One) {
+                        relations.push(this.runInverseQueryOne2Many(query, i, ids, inverseField));
+                    } else if (inverseField.properties.relation.type == RelationType.Many2Many) {
+                        relations.push(this.runRelatedQueryMany2Many(query, i, ids, inverseField));
+                    }
+
                 }
             }
         }
@@ -815,6 +800,103 @@ export class MySQL extends Database {
                 return list;
             });
 
+    }
+
+    private runRelatedQuery(query: Vql, i: number, ids: Array<number>) {
+        let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
+        let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
+        let fields = '*';
+        if (typeof query.relations[i] != 'string') {
+            for (let j = query.relations[i]['fields'].length; j--;) {
+                query.relations[i]['fields'][j] = `m.${query.relations[i]['fields'][j]}`;
+            }
+            fields = query.relations[i]['fields'].join(',');
+        }
+        let leftKey = this.camelCase(query.model);
+        let rightKey = this.camelCase(relationship.model.schema.name);
+        return this.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
+                LEFT JOIN \`${query.model + 'Has' + this.pascalCase(relationName)}\` r 
+                ON (m.${this.pk(relationship.model.schema.name)} = r.${rightKey}) 
+                WHERE r.${leftKey} IN (?)`, [ids])
+            .then(relatedList => {
+                let result = {};
+                result[relationName] = relatedList;
+                return result;
+            })
+
+
+    };
+
+    private runInverseQueryOne2Many(query: Vql, i: number, ids: Array<number>, inverseField: Field) {
+        let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
+        let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
+        let fields = [];
+        if (typeof query.relations[i] != 'string') {
+            for (let j = query.relations[i]['fields'].length; j--;) {
+                query.relations[i]['fields'][j] = `${query.relations[i]['fields'][j]}`;
+            }
+            fields = query.relations[i]['fields'];
+        }else{
+            fields = ['*']
+        }
+        fields.push(`${inverseField.fieldName} as ${this.camelCase(relationName)}`);
+        fields.push(`${this.pk(query.model)} as ${this.camelCase(query.model)}`);
+        let vql = new Vql(relationship.model.schema.name);
+        if (fields && fields.length) vql.select(...fields);
+        let condition = new Condition(Condition.Operator.Or);
+        for (let i = 0; i < ids.length; i++) {
+            condition.append(new Condition(Condition.Operator.EqualTo).compare(inverseField.fieldName, ids[i]))
+        }
+        vql.where(condition);
+        return this.findByQuery(vql).then(result => {
+            let data = {};
+            data[relationName] = result.items;
+            return data;
+        })
+
+
+    };
+
+    private runRelatedQueryMany2Many(query: Vql, i: number, ids: Array<number>, inverseField: Field) {
+        let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
+        let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
+        let fields = '*';
+        if (typeof query.relations[i] != 'string') {
+            for (let j = query.relations[i]['fields'].length; j--;) {
+                query.relations[i]['fields'][j] = `m.${query.relations[i]['fields'][j]}`;
+            }
+            fields = query.relations[i]['fields'].join(',');
+        }
+        let leftKey = this.camelCase(query.model);
+        let rightKey = this.camelCase(relationship.model.schema.name);
+        return this.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
+                LEFT JOIN \`${relationship.model.schema.name + 'Has' + this.pascalCase(inverseField.fieldName)}\` r 
+                ON (m.${this.pk(query.model)} = r.${rightKey}) 
+                WHERE r.${leftKey} IN (?)`, [ids])
+            .then(relatedList => {
+                let result = {};
+                result[relationName] = relatedList;
+                return result;
+            })
+
+
+    };
+
+
+    private getInverseRelation(query: Vql, field: Field): Field | null {
+        let modelName = query.model;
+        let relatedField = null;
+        let relatedModel = field.properties.relation.model;
+        let fields = relatedModel.schema.getFields();
+        let keys = relatedModel.schema.getFieldsNames();
+        for (let i = 0, il = keys.length; i < il; i++) {
+            let properties = fields[keys[i]].properties;
+            if (properties.type == FieldType.Relation && properties.relation.model.schema.name == modelName) {
+                relatedField = fields[keys[i]];
+                break;
+            }
+        }
+        return relatedField;
     }
 
     private getLists(list: Array < any >, query: Vql) {
@@ -1009,7 +1091,7 @@ export class MySQL extends Database {
 
     private columnDefinition(filed: Field) {
         let properties = filed.properties;
-        if (properties.type == FieldType.List || (properties.relation && properties.relation.type == RelationType.Many2Many)) {
+        if (properties.type == FieldType.List || (properties.relation && properties.relation.type == RelationType.Many2Many) || (properties.relation && properties.relation.type == RelationType.Inverse)) {
             return '';
         }
         let columnSyntax = `\`${filed.fieldName}\` ${this.getType(properties)}`;
