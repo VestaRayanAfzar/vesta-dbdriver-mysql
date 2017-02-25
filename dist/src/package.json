@@ -1,6 +1,6 @@
 {
   "name": "vesta-driver-mysql",
-  "version": "0.4.10-beta.7",
+  "version": "0.4.10-beta.8",
   "description": "Vesta Platform MySQL drievr based on Database Class",
   "keywords": [
     "NodeJS",
