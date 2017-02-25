@@ -760,12 +760,12 @@ export class MySQL extends Database {
                 let relationship = field.properties.relation;
                 if (relationship.type == RelationType.Many2Many) {
                     relations.push(this.runRelatedQuery(query, i, ids))
-                } else if (relationship.type == RelationType.Inverse) {
-                    let inverseField = this.getInverseRelation(query, field);
-                    if (inverseField.properties.relation.type == RelationType.One2Many || inverseField.properties.relation.type == RelationType.One2One) {
-                        relations.push(this.runInverseQueryOne2Many(query, i, ids, inverseField));
-                    } else if (inverseField.properties.relation.type == RelationType.Many2Many) {
-                        relations.push(this.runRelatedQueryMany2Many(query, i, ids, inverseField));
+                } else if (relationship.type == RelationType.Reverse) {
+                    let reverseField = this.getReverseRelation(query, field);
+                    if (reverseField.properties.relation.type == RelationType.One2Many || reverseField.properties.relation.type == RelationType.One2One) {
+                        relations.push(this.runReverseQueryOne2Many(query, i, ids, reverseField));
+                    } else if (reverseField.properties.relation.type == RelationType.Many2Many) {
+                        relations.push(this.runRelatedQueryMany2Many(query, i, ids, reverseField));
                     }
 
                 }
@@ -827,7 +827,7 @@ export class MySQL extends Database {
 
     };
 
-    private runInverseQueryOne2Many(query: Vql, i: number, ids: Array<number>, inverseField: Field) {
+    private runReverseQueryOne2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field) {
         let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
         let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
         let fields = [];
@@ -839,13 +839,13 @@ export class MySQL extends Database {
         }else{
             fields = ['*']
         }
-        fields.push(`${inverseField.fieldName} as ${this.camelCase(relationName)}`);
+        fields.push(`${reverseField.fieldName} as ${this.camelCase(relationName)}`);
         fields.push(`${this.pk(query.model)} as ${this.camelCase(query.model)}`);
         let vql = new Vql(relationship.model.schema.name);
         if (fields && fields.length) vql.select(...fields);
         let condition = new Condition(Condition.Operator.Or);
         for (let i = 0; i < ids.length; i++) {
-            condition.append(new Condition(Condition.Operator.EqualTo).compare(inverseField.fieldName, ids[i]))
+            condition.append(new Condition(Condition.Operator.EqualTo).compare(reverseField.fieldName, ids[i]))
         }
         vql.where(condition);
         return this.findByQuery(vql).then(result => {
@@ -857,7 +857,7 @@ export class MySQL extends Database {
 
     };
 
-    private runRelatedQueryMany2Many(query: Vql, i: number, ids: Array<number>, inverseField: Field) {
+    private runRelatedQueryMany2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field) {
         let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
         let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
         let fields = '*';
@@ -870,7 +870,7 @@ export class MySQL extends Database {
         let leftKey = this.camelCase(query.model);
         let rightKey = this.camelCase(relationship.model.schema.name);
         return this.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
-                LEFT JOIN \`${relationship.model.schema.name + 'Has' + this.pascalCase(inverseField.fieldName)}\` r 
+                LEFT JOIN \`${relationship.model.schema.name + 'Has' + this.pascalCase(reverseField.fieldName)}\` r 
                 ON (m.${this.pk(query.model)} = r.${rightKey}) 
                 WHERE r.${leftKey} IN (?)`, [ids])
             .then(relatedList => {
@@ -883,7 +883,7 @@ export class MySQL extends Database {
     };
 
 
-    private getInverseRelation(query: Vql, field: Field): Field | null {
+    private getReverseRelation(query: Vql, field: Field): Field | null {
         let modelName = query.model;
         let relatedField = null;
         let relatedModel = field.properties.relation.model;
@@ -1091,7 +1091,7 @@ export class MySQL extends Database {
 
     private columnDefinition(filed: Field) {
         let properties = filed.properties;
-        if (properties.type == FieldType.List || (properties.relation && properties.relation.type == RelationType.Many2Many) || (properties.relation && properties.relation.type == RelationType.Inverse)) {
+        if (properties.type == FieldType.List || (properties.relation && properties.relation.type == RelationType.Many2Many) || (properties.relation && properties.relation.type == RelationType.Reverse)) {
             return '';
         }
         let columnSyntax = `\`${filed.fieldName}\` ${this.getType(properties)}`;
