@@ -507,11 +507,11 @@ export class MySQL extends Database {
         for (let key in value) {
             if (value.hasOwnProperty(key) && schemaFieldsName.indexOf(key) >= 0 && value[key] !== undefined) {
                 if (schemaFields[key].properties.type == FieldType.Relation) {
-                    relations[key] = value[key]
+                    relations[<string>key] = value[<string>key]
                 } else if (schemaFields[key].properties.type == FieldType.List) {
-                    lists[key] = value[key]
+                    lists[<string>key] = value[<string>key]
                 } else {
-                    let thisValue: string|number = schemaFields[key].properties.type == FieldType.Object ? JSON.stringify(value[key]) : value[key];
+                    let thisValue: string|number = schemaFields[key].properties.type == FieldType.Object ? JSON.stringify(value[key]) : <string>value[key];
                     properties.push({field: key, value: thisValue})
                 }
             }
@@ -547,8 +547,8 @@ export class MySQL extends Database {
                 if (query.fields[i] instanceof Vql) {
                     fields.push(this.getSubQuery(<Vql>query.fields[i]));
                 }
-                else if (modelFields[query.fields[i]]) {
-                    if (modelFields[query.fields[i]].properties.type == FieldType.List) continue;
+                else if (modelFields[<string>query.fields[i]]) {
+                    if (modelFields[<string>query.fields[i]].properties.type == FieldType.List) continue;
                     fields.push(`\`${alias}\`.${query.fields[i]}`)
                 }
             }
