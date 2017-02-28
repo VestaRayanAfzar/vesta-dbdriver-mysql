@@ -32,6 +32,7 @@ export class MySQL extends Database {
     private models: IModelCollection;
     private primaryKeys: {[name: string]: string} = {};
     private transactions: {[key: number]: IConnection};
+    private quote = '<#quote#>';
 
     public connect(force = false): Promise<Database> {
         if (this.connection && !force) return Promise.resolve(this);
@@ -147,7 +148,7 @@ export class MySQL extends Database {
             })
             .catch(err => {
                 if (err) {
-                    return Promise.reject( new DatabaseError(Err.Code.DBQuery, err));
+                    return Promise.reject(new DatabaseError(Err.Code.DBQuery, err));
                 }
             })
     }
@@ -583,7 +584,7 @@ export class MySQL extends Database {
                         if (typeof query.relations[i] == 'string' || query.relations[i]['fields'].indexOf(filedNameList[j]) >= 0) {
                             if (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation ||
                                 (relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2One || relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2Many)) {
-                                modelFiledList.push(`'"${filedNameList[j]}":','"',COALESCE(c.${filedNameList[j]},''),'"'`)
+                                modelFiledList.push(`'${this.quote}${filedNameList[j]}${this.quote}:','${this.quote}',COALESCE(c.${filedNameList[j]},''),'${this.quote}'`)
                             }
                         }
                     }
@@ -653,7 +654,7 @@ export class MySQL extends Database {
         let modelFiledList = [];
         for (let i = 0, il = params.fieldsList.length; i < il; i++) {
             let field = params.fieldsList[i].replace(`\`${query.model}\`.`, '');
-            modelFiledList.push(`'"${field}":','"',COALESCE(${field},''),'"'`)
+            modelFiledList.push(`'${this.quote}${field}${this.quote}:','${this.quote}',COALESCE(${field},''),'${this.quote}'`)
         }
         let modelAs = query.model[0].toLowerCase() + query.model.substr(1, query.model.length - 1);
         return `(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${query.model}\` ${params.condition} ${params.orderBy} limit 1) as ${modelAs}`;
@@ -836,7 +837,7 @@ export class MySQL extends Database {
                 query.relations[i]['fields'][j] = `${query.relations[i]['fields'][j]}`;
             }
             fields = query.relations[i]['fields'];
-        }else{
+        } else {
             fields = ['*']
         }
         fields.push(`${reverseField.fieldName} as ${this.camelCase(relationName)}`);
@@ -971,9 +972,9 @@ export class MySQL extends Database {
 
     private parseJson(str) {
         if (typeof str == 'string' && str) {
-            let replace = ['\\n', '\\b', '\\r', '\\t', '\\v', "\\'"];
-            let search = ['\n', '\b', '\r', '\t', '\v', '\''];
-            for (let i = search.length; i--;) {
+            let replace = ['\\n', '”', '\\r', '\\t', '\\v', "’", '"'];
+            let search = [/\n/ig, /"/ig, /\r/ig, /\t/ig, /\v/ig, /'/ig, new RegExp(this.quote, 'gi')];
+            for (let i = 0; i < search.length; i++) {
                 str = str.replace(search[i], replace[i]);
             }
             let json;
@@ -1036,10 +1037,6 @@ export class MySQL extends Database {
 
     private pascalCase(str) {
         return str[0].toUpperCase() + str.slice(1)
-    }
-
-    private qoute(str) {
-        return `\`${str}\``;
     }
 
     private createDefinition(fields: IModelFields, table: string, checkMultiLingual = true) {
