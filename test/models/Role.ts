@@ -1,8 +1,5 @@
-import {Model} from "vesta-schema/Model";
-import {Schema} from "vesta-schema/Schema";
-import {FieldType} from "vesta-schema/Field";
-import {Permission, IPermission} from "./Permission";
-import {Database} from "vesta-schema/Database";
+import {Database, FieldType, Model, Schema} from "vesta-lib";
+import {IPermission, Permission} from "./Permission";
 
 export interface IRole {
     id?:number|string;
