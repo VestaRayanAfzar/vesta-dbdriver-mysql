@@ -7,7 +7,7 @@ import {
     IModelFields,
     IQueryOption,
     IQueryResult,
-    ISchemaList, IUpsertResult, Model, RelationType, Schema, Vql
+    ISchemaList, IUpsertResult, Model, RelationType, Schema, Transaction, Vql
 } from "vesta-lib";
 
 interface ICalculatedQueryOptions {
@@ -25,7 +25,8 @@ export interface IMySQLConfig extends IDatabaseConfig {
     collate: string
 }
 
-export class MySQL extends Database {
+export class MySQL implements Database {
+
     private pool: IPool;
     private connection: IConnection;
     private schemaList: ISchemaList = {};
@@ -66,7 +67,6 @@ export class MySQL extends Database {
     }
 
     constructor(config: IMySQLConfig, models: IModelCollection) {
-        super();
         this.schemaList = {};
         for (let model in models) {
             if (models.hasOwnProperty(model)) {
@@ -104,6 +104,28 @@ export class MySQL extends Database {
         }
         return createSchemaPromise;
     }
+
+    private prepareTransaction(transaction?: Transaction): Promise<Transaction> {
+        if (!transaction) transaction = new Transaction();
+        if (transaction.connection) return Promise.resolve(transaction);
+        return this.getConnection().then(connection => {
+            transaction.connection = connection;
+            transaction.commit = () => new Promise((resolve, reject) => connection.commit((err) => {
+                if (err && err.fatal) {
+                    this.close(connection).then(() => reject(err)).catch(() => reject(err));
+                } else {
+                    connection.release();
+                }
+                err ? reject(err) : resolve(true)
+            }));
+            transaction.rollback = () => new Promise((resolve, reject) => connection.rollback(() => {
+                connection.release();
+                resolve(true)
+            }));
+            return new Promise<Transaction>((resolve, reject) => connection.beginTransaction(err => err ? reject(err) : resolve(transaction)))
+        })
+    }
+
 
     public findById<T>(model: string, id: number | string, option: IQueryOption = {}): Promise<IQueryResult<T>> {
         let query = new Vql(model);
@@ -164,8 +186,9 @@ export class MySQL extends Database {
         }
     }
 
-    public increase<T>(model: string, id: number | string, field: string, value: number): Promise<IQueryResult<T>> {
-        return this.query(`UPDATE \`${model}\` SET \`${field}\` = \`${field}\` + (?) WHERE ${this.pk(model)} = ?`, [value, id])
+    public increase<T>(model: string, id: number | string, field: string, value: number, transaction?: Transaction): Promise<IQueryResult<T>> {
+        let start: Promise<Transaction> = !transaction ? Promise.resolve(null) : Promise.resolve(this.prepareTransaction(transaction));
+        return start.then(transaction => this.query(`UPDATE \`${model}\` SET \`${field}\` = \`${field}\` + (?) WHERE ${this.pk(model)} = ?`, [value, id], transaction))
             .then(data => {
                 return this.findById(model, id)
             })
@@ -197,7 +220,9 @@ export class MySQL extends Database {
             })
     }
 
-    public insertOne<T>(model: string, value: T): Promise<IUpsertResult<T>> {
+    public insertOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
+        let localTransaction = !transaction;
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let analysedValue = this.getAnalysedValue<T>(model, value);
         let properties = [];
@@ -206,43 +231,43 @@ export class MySQL extends Database {
             properties.push(`\`${analysedValue.properties[i].field}\` = ?`);
             propertiesValue.push(analysedValue.properties[i].value);
         }
-
-        return this.query(`INSERT INTO \`${model}\` SET ${properties.join(',')}`, propertiesValue)
+        return prepare.then(transaction => this.query(`INSERT INTO \`${model}\` SET ${properties.join(',')}`, propertiesValue, transaction))
             .then(insertResult => {
                 let steps = [];
                 for (let key in analysedValue.relations) {
                     if (analysedValue.relations.hasOwnProperty(key)) {
-                        steps.push(this.addRelation(new this.models[model]({id: insertResult['insertId']}), key, analysedValue.relations[key]));
+                        steps.push(this.addRelation(new this.models[model]({id: insertResult['insertId']}), key, analysedValue.relations[key], transaction));
                     }
 
                 }
                 for (let key in analysedValue.lists) {
                     if (analysedValue.lists.hasOwnProperty(key)) {
-                        steps.push(this.addList(new this.models[model]({id: insertResult['insertId']}), key, analysedValue.lists[key]));
+                        steps.push(this.addList(new this.models[model]({id: insertResult['insertId']}), key, analysedValue.lists[key], transaction));
                     }
                 }
                 let id = insertResult['insertId'];
-                return Promise.all(steps).then(() => this.query(`SELECT * FROM \`${model}\` WHERE ${this.pk(model)} = ?`, [id]));
+                return Promise.all(steps).then(() => this.query(`SELECT * FROM \`${model}\` WHERE ${this.pk(model)} = ?`, [id], transaction));
             })
             .then(list => {
                 result.items = <Array<T>>list;
-                return result;
+                return localTransaction ? transaction.commit().then(() => result) : result
             })
             .catch(err => {
                 result.error = new Err(Err.Code.DBInsert, err && err.message);
-                return Promise.reject(result);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result);
             });
     }
 
-    private updateList<T>(model: T, list, value) {
+    private updateList<T>(model: T, list, value, transaction: Transaction) {
         let modelName = model['schema'].name;
         let table = modelName + this.pascalCase(list) + 'List';
-        return this.query(`DELETE FROM ${table} WHERE fk = ?`, [model[this.pk(modelName)]]).then(() => {
-            return this.addList(model, list, value)
-        })
+        return this.query(`DELETE FROM ${table} WHERE fk = ?`, [model[this.pk(modelName)]], transaction)
+            .then(() => {
+                return this.addList(model, list, value, transaction)
+            })
     }
 
-    private addList<T>(model: T, list: string, value: Array<any>): Promise<any> {
+    private addList<T>(model: T, list: string, value: Array<any>, transaction: Transaction): Promise<any> {
         let modelName = model['schema'].name;
         if (!value || !value.length) {
             return Promise.resolve([]);
@@ -257,11 +282,11 @@ export class MySQL extends Database {
             return result
         }, '');
         let table = modelName + this.pascalCase(list) + 'List';
-        return this.query(`INSERT INTO ${table} (\`fk\`,\`value\`) VALUES ${condition}`, values)
+        return this.query(`INSERT INTO ${table} (\`fk\`,\`value\`) VALUES ${condition}`, values, transaction)
 
     }
 
-    public insertAll<T>(model: string, value: Array<T>): Promise<IUpsertResult<T>> {
+    public insertAll<T>(model: string, value: Array<T>, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let fields = this.schemaList[model].getFields();
         let fieldsName = [];
@@ -288,7 +313,8 @@ export class MySQL extends Database {
             return Promise.resolve(result);
         }
 
-        return this.query<Array<T>>(`INSERT INTO ${model} (${fieldsName.join(',')}) VALUES ${insertList}`)
+        let prepare: Promise<Transaction> = transaction ? this.prepareTransaction(transaction) : Promise.resolve(null);
+        return prepare.then(transaction => this.query<Array<T>>(`INSERT INTO ${model} (${fieldsName.join(',')}) VALUES ${insertList}`, null, transaction))
             .then(insertResult => {
                 result.items = insertResult;
                 return result;
@@ -300,19 +326,16 @@ export class MySQL extends Database {
 
     }
 
-    private addRelation<T, M>(model: T, relation: string, value: number
-                                  | Array<number>
-                                  | M
-                                  | Array<M>): Promise<IUpsertResult<M>> {
+    private addRelation<T, M>(model: T, relation: string, value: number | Array<number> | M | Array<M>, transaction?: Transaction): Promise<IUpsertResult<M>> {
         let modelName = model.constructor['schema'].name;
         let fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation && value) {
             switch (fields[relation].properties.relation.type) {
                 case RelationType.One2Many:
                 case RelationType.One2One:
-                    return this.addOneToManyRelation(model, relation, value);
+                    return this.addOneToManyRelation(model, relation, value, transaction);
                 case RelationType.Many2Many:
-                    return this.addManyToManyRelation(model, relation, value);
+                    return this.addManyToManyRelation(model, relation, value, transaction);
                 default:
                     return Promise.resolve({});
             }
@@ -320,9 +343,7 @@ export class MySQL extends Database {
         return Promise.reject(new Err(Err.Code.DBInsert, 'error in adding relation'));
     }
 
-    private removeRelation<T>(model: T, relation: string, condition?: Condition
-                                  | number
-                                  | Array<number>): Promise<any> {
+    private removeRelation<T>(model: T, relation: string, condition?: Condition | number | Array<number>, transaction?: Transaction): Promise<any> {
         let modelName = model.constructor['schema'].name;
         let relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         let safeCondition: Condition;
@@ -342,9 +363,9 @@ export class MySQL extends Database {
             switch (fields[relation].properties.relation.type) {
                 case RelationType.One2Many:
                 case RelationType.One2One:
-                    return this.removeOneToManyRelation(model, relation);
+                    return this.removeOneToManyRelation(model, relation, transaction);
                 case RelationType.Many2Many:
-                    return this.removeManyToManyRelation(model, relation, safeCondition);
+                    return this.removeManyToManyRelation(model, relation, safeCondition, transaction);
                 default:
                     return Promise.resolve({});
             }
@@ -352,7 +373,7 @@ export class MySQL extends Database {
         return Promise.reject(new Err(Err.Code.DBDelete, 'error in removing relation'));
     }
 
-    private updateRelations(model: Model, relation, relatedValues) {
+    private updateRelations(model: Model, relation, relatedValues, transaction?: Transaction) {
         let modelName = model.constructor['schema'].name;
         let relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         let ids = [0];
@@ -364,13 +385,15 @@ export class MySQL extends Database {
             }
         }
         return this.query(`DELETE FROM ${this.pascalCase(modelName)}Has${this.pascalCase(relation)} 
-                    WHERE ${this.camelCase(modelName)} = ?`, [model[this.pk(modelName)]])
+                    WHERE ${this.camelCase(modelName)} = ?`, [model[this.pk(modelName)]], transaction)
             .then(() => {
-                return this.addRelation(model, relation, ids)
+                return this.addRelation(model, relation, ids, transaction)
             })
     }
 
-    public updateOne<T>(model: string, value: T): Promise<IUpsertResult<T>> {
+    public updateOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
+        let localTransaction = !transaction;
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let analysedValue = this.getAnalysedValue<T>(model, value);
         let properties = [];
@@ -385,46 +408,52 @@ export class MySQL extends Database {
         let steps = [];
         let relationsNames = Object.keys(analysedValue.relations);
         let modelFields = this.schemaList[model].getFields();
-        for (let i = relationsNames.length; i--;) {
-            let relation = relationsNames[i];
-            let relationValue = analysedValue.relations[relation];
-            // todo check if it is required
-            if (!relationValue) continue;
-            switch (modelFields[relation].properties.relation.type) {
-                case RelationType.One2Many:
-                case RelationType.One2One:
-                    let fk = +relationValue;
-                    if (!fk && 'object' == typeof relationValue) {
-                        let relatedModelName = modelFields[relation].properties.relation.model.schema.name;
-                        fk = +relationValue[this.pk(relatedModelName)];
-                    }
-                    if (fk) {
-                        properties.push(`\`${relation}\` = ?`);
-                        propertiesData.push(fk);
-                    }
-                    break;
-                case RelationType.Many2Many:
-                    steps.push(this.updateRelations(new this.models[model](value), relation, relationValue));
-                    break;
-            }
-        }
-        for (let key in analysedValue.lists) {
-            if (analysedValue.lists.hasOwnProperty(key)) {
-                steps.push(this.updateList(new this.models[model]({id: id}), key, analysedValue.lists[key]));
-            }
-        }
 
-        return Promise.all<any>(steps)
-            .then(() => properties.length ? this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ?`, propertiesData.concat([id])) : [])
+        return prepare.then(transaction => {
+            for (let i = relationsNames.length; i--;) {
+                let relation = relationsNames[i];
+                let relationValue = analysedValue.relations[relation];
+                // todo check if it is required
+                if (!relationValue) continue;
+                switch (modelFields[relation].properties.relation.type) {
+                    case RelationType.One2Many:
+                    case RelationType.One2One:
+                        let fk = +relationValue;
+                        if (!fk && 'object' == typeof relationValue) {
+                            let relatedModelName = modelFields[relation].properties.relation.model.schema.name;
+                            fk = +relationValue[this.pk(relatedModelName)];
+                        }
+                        if (fk) {
+                            properties.push(`\`${relation}\` = ?`);
+                            propertiesData.push(fk);
+                        }
+                        break;
+                    case RelationType.Many2Many:
+                        steps.push(this.updateRelations(new this.models[model](value), relation, relationValue, transaction));
+                        break;
+                }
+            }
+            for (let key in analysedValue.lists) {
+                if (analysedValue.lists.hasOwnProperty(key)) {
+                    steps.push(this.updateList(new this.models[model]({id: id}), key, analysedValue.lists[key], transaction));
+                }
+            }
+            return Promise.all<any>(steps).then(() => transaction)
+        })
+
+            .then((transaction) => properties.length ? this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ?`, propertiesData.concat([id]), transaction) : [])
             .then(() => this.findById(model, id))
+            .then((result) => localTransaction ? transaction.commit().then(() => result) : result)
             .catch(err => {
                 result.error = new Err(Err.Code.DBQuery, err && err.message);
-                return Promise.reject(result);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result)
             });
 
     }
 
-    public updateAll<T>(model: string, newValues: T, condition: Condition): Promise<IUpsertResult<T>> {
+    public updateAll<T>(model: string, newValues: T, condition: Condition, transaction?: Transaction): Promise<IUpsertResult<T>> {
+        let localTransaction = !transaction;
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
         let sqlCondition = this.getCondition(model, condition);
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let properties = [];
@@ -435,71 +464,76 @@ export class MySQL extends Database {
                 propertiesData.push(newValues[key]);
             }
         }
-        return this.query<Array<T>>(`SELECT ${this.pk(model)} FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`)
+        return prepare.then(transaction => this.query<Array<T>>(`SELECT ${this.pk(model)} FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`, null, transaction))
             .then(list => {
                 let ids = [];
                 for (let i = list.length; i--;) {
                     ids.push(list[i][this.pk(model)]);
                 }
                 if (!ids.length) return [];
-                return this.query<any>(`UPDATE \`${model}\` SET ${properties.join(',')}  WHERE ${this.pk(model)} IN (?)`, propertiesData.concat([ids]))
+                return this.query<any>(`UPDATE \`${model}\` SET ${properties.join(',')}  WHERE ${this.pk(model)} IN (?)`, propertiesData.concat([ids]), transaction)
                     .then(updateResult => {
-                        return this.query<Array<T>>(`SELECT * FROM \`${model}\` WHERE ${this.pk(model)} IN (?)`, [ids])
+                        return this.query<Array<T>>(`SELECT * FROM \`${model}\` WHERE ${this.pk(model)} IN (?)`, [ids], transaction)
                     })
             })
             .then(list => {
                 result.items = list;
-                return result
+                return localTransaction ? transaction.commit().then(() => result) : result;
             })
             .catch(err => {
                 result.error = new Err(Err.Code.DBUpdate, err && err.message);
-                return Promise.reject(result);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result);
             });
     }
 
-    public deleteOne(model: string, id: number | string): Promise<IDeleteResult> {
+    public deleteOne(model: string, id: number | string, transaction?: Transaction): Promise<IDeleteResult> {
+        let localTransaction = !transaction;
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
         let result: IDeleteResult = <IDeleteResult>{};
         let fields = this.schemaList[model].getFields();
-        return this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} = ?`, [id])
+        return prepare.then(transaction => this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} = ?`, [id], transaction))
             .then(deleteResult => {
                 let instance = new this.models[model]();
                 instance[this.pk(model)] = id;
+                let steps = [];
                 for (let field in this.schemaList[model].getFields()) {
                     if (fields.hasOwnProperty(field) && fields[field].properties.type == FieldType.Relation) {
-                        this.removeRelation(instance, field, 0)
+                        steps.push(this.removeRelation(instance, field, 0, transaction));
                     }
                 }
                 result.items = [id];
-                return result;
+                return Promise.all(steps).then(() => result);
             })
+            .then(result => localTransaction ? transaction.commit().then(() => result) : result)
             .catch(err => {
                 result.error = new Err(Err.Code.DBDelete, err && err.message);
-                return Promise.reject(result);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result)
             })
     }
 
-    public deleteAll<T>(model: string, condition: Condition): Promise<IDeleteResult> {
+    public deleteAll<T>(model: string, condition: Condition, transaction?: Transaction): Promise<IDeleteResult> {
+        let localTransaction = !transaction;
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
+
         let sqlCondition = this.getCondition(model, condition);
         let result: IDeleteResult = <IDeleteResult>{};
-        return this.query<Array<T>>(`SELECT ${this.pk(model)} FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`)
+        return prepare.then(transaction => this.query<Array<T>>(`SELECT ${this.pk(model)} FROM \`${model}\` ${sqlCondition ? `WHERE ${sqlCondition}` : ''}`, null, transaction))
             .then(list => {
                 let ids = [];
                 for (let i = list.length; i--;) {
                     ids.push(list[i][this.pk(model)]);
                 }
                 if (!ids.length) return [];
-                return this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} IN (?)`, [ids])
-                    .then(deleteResult => {
-                        return ids;
-                    })
+                return this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} IN (?)`, [ids], transaction)
+                    .then(deleteResult => ids)
             })
             .then(ids => {
                 result.items = ids;
-                return result;
+                return localTransaction ? transaction.commit().then(() => result) : result;
             })
             .catch(err => {
                 result.error = new Err(Err.Code.DBDelete, err && err.message);
-                return Promise.reject(result);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result);
             })
     }
 
@@ -517,8 +551,7 @@ export class MySQL extends Database {
                 } else if (schemaFields[key].properties.type == FieldType.List) {
                     lists[<string>key] = value[<string>key]
                 } else {
-                    let thisValue: string
-                        | number = schemaFields[key].properties.type == FieldType.Object ? JSON.stringify(value[key]) : value[key].toString();
+                    let thisValue: string | number = schemaFields[key].properties.type == FieldType.Object ? JSON.stringify(value[key]) : value[key].toString();
                     properties.push({field: key, value: thisValue})
                 }
             }
@@ -684,74 +717,6 @@ export class MySQL extends Database {
             let childrenConditionStr = childrenCondition.join(` ${operator} `).trim();
             return childrenConditionStr ? `(${childrenConditionStr})` : '';
         }
-    }
-
-    public getChildrenRelations(list, query) {
-        let ids = [];
-        let runRelatedQuery = (i) => {
-            let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
-            let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
-            let fields = '*';
-            if (typeof query.relations[i] != 'string') {
-                for (let j = query.relations[i]['fields'].length; j--;) {
-                    query.relations[i]['fields'][j] = "m." + query.relations[i]['fields'][j];
-                }
-                fields = query.relations[i]['fields'].join(',');
-            }
-            let leftKey = this.camelCase(query.model);
-            let rightKey = this.camelCase(relationship.model.schema.name);
-            return this.query(
-                `SELECT ${fields},r.${leftKey},r.${rightKey} FROM \`${relationship.model.schema.name}\` m 
-                LEFT JOIN \`${(query.model + 'Has' + this.pascalCase(relationName))}\` r 
-                ON (m.${this.pk(relationship.model.schema.name)} = r.${rightKey}) 
-                WHERE r.${leftKey} IN (?)`, ids)
-                .then(function (relatedList) {
-                    let result = {};
-                    result[relationName] = relatedList;
-                    return result;
-                });
-        };
-        for (let i = list.length; i--;) {
-            ids.push(list[i][this.pk(query.model)]);
-        }
-        let relations = [];
-        if (ids.length && query.relations && query.relations.length) {
-            for (let i = query.relations.length; i--;) {
-                let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
-                let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
-                if (relationship.type == RelationType.Many2Many) {
-                    relations.push(runRelatedQuery(i));
-                }
-            }
-        }
-        if (!relations.length)
-            return Promise.resolve(list);
-        return Promise.all(relations)
-            .then((data) => {
-                let leftKey = this.camelCase(query.model);
-                for (let i = data.length; i--;) {
-                    for (let related in data[i]) {
-                        if (data[i].hasOwnProperty(related)) {
-                            let relationship = this.schemaList[query.model].getFields()[related].properties.relation;
-                            let rightKey = this.camelCase(relationship.model.schema.name);
-                            for (let k = list.length; k--;) {
-                                let id = list[k][this.pk(query.model)];
-                                list[k][related] = [];
-                                for (let j = data[i][related].length; j--;) {
-                                    if (id == data[i][related][j][this.camelCase(query.model)]) {
-                                        let relatedData = data[i][related][j];
-                                        relatedData[this.pk(relationship.model.schema.name)] = relatedData[rightKey];
-                                        delete relatedData[rightKey];
-                                        delete relatedData[leftKey];
-                                        list[k][related].push(relatedData);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                return list;
-            });
     }
 
     private getManyToManyRelation(list: Array<any>, query: Vql) {
@@ -1190,18 +1155,14 @@ export class MySQL extends Database {
         }
     }
 
-    private addOneToManyRelation<T, M>(model: T, relation: string, value: number
-                                           | { [property: string]: any }): Promise<IUpsertResult<M>> {
+    private addOneToManyRelation<T, M>(model: T, relation: string, value: number | { [property: string]: any }, transaction?: Transaction): Promise<IUpsertResult<M>> {
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let modelName = model.constructor['schema'].name;
         let fields = this.schemaList[modelName].getFields();
         let relatedModelName = fields[relation].properties.relation.model.schema.name;
         let readIdPromise;
         if (fields[relation].properties.relation.isWeek && typeof value == 'object' && !value[this.pk(relatedModelName)]) {
-            let relatedObject = new fields[relation].properties.relation.model(value);
-            readIdPromise = relatedObject.insert().then(result => {
-                return result.items[0][this.pk(relatedModelName)];
-            })
+            readIdPromise = this.insertOne(relatedModelName, value, transaction).then(result => result.items[0][this.pk(relatedModelName)])
         } else {
             let id;
             if (+value) {
@@ -1214,7 +1175,7 @@ export class MySQL extends Database {
         }
         return readIdPromise
             .then(id => {
-                return this.query<Array<T>>(`UPDATE \`${modelName}\` SET \`${relation}\` = ? WHERE ${this.pk(relatedModelName)}=? `, [id, model[this.pk(relatedModelName)]])
+                return this.query<Array<T>>(`UPDATE \`${modelName}\` SET \`${relation}\` = ? WHERE ${this.pk(relatedModelName)}=? `, [id, model[this.pk(relatedModelName)]], transaction)
             })
             .then(updateResult => {
                 result.items = updateResult;
@@ -1226,11 +1187,8 @@ export class MySQL extends Database {
 
     }
 
-    private addManyToManyRelation<T, M>(model: T, relation: string, value: number
-                                            | Array<number>
-                                            | M
-                                            | Array<M>): Promise<IUpsertResult<M>> {
-        let result: IUpsertResult<T> = <IUpsertResult<T>>{};
+    private addManyToManyRelation<T, M>(model: T, relation: string, value: number | Array<number> | M | Array<M>, transaction?: Transaction): Promise<IUpsertResult<M>> {
+        let result: IUpsertResult<M> = <IUpsertResult<M>>{};
         let modelName = model.constructor['schema'].name;
         let fields = this.schemaList[modelName].getFields();
         let relatedModelName = fields[relation].properties.relation.model.schema.name;
@@ -1257,7 +1215,7 @@ export class MySQL extends Database {
                 if (!newRelation.length) {
                     return relationIds;
                 }
-                return this.insertAll(relatedModelName, newRelation)
+                return this.insertAll(relatedModelName, newRelation, transaction)
                     .then(result => {
                         for (let i = result.items.length; i--;) {
                             relationIds.push(result.items[i][this.pk(relatedModelName)]);
@@ -1276,7 +1234,7 @@ export class MySQL extends Database {
                     insertList.push(`(${model[this.pk(modelName)]},${this.escape(relationIds[i])})`);
                 }
                 return this.query<any>(`INSERT INTO ${modelName}Has${this.pascalCase(relation)}
-                    (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(',')}`)
+                    (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(',')}`, null, transaction)
                     .then(insertResult => {
                         result.items = insertResult;
                         return result
@@ -1289,7 +1247,7 @@ export class MySQL extends Database {
 
     }
 
-    private removeOneToManyRelation<T>(model: T, relation: string) {
+    private removeOneToManyRelation<T>(model: T, relation: string, transaction: Transaction) {
         let modelName = model.constructor['schema'].name;
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
@@ -1298,12 +1256,12 @@ export class MySQL extends Database {
         if (isWeek) {
             let readRelationId: Promise<number> = +model[relation] ? Promise.resolve(+model[relation]) : this.findById(modelName, model[this.pk(modelName)]).then(result => result.items[0][relation]);
             readRelationId.then(relationId => {
-                return this.deleteOne(relatedModelName, relationId).then(() => relationId);
+                return this.deleteOne(relatedModelName, relationId, transaction).then(() => relationId);
             })
         }
         return preparePromise
             .then(() => {
-                return this.query<any>(`UPDATE \`${modelName}\` SET ${relation} = 0 WHERE ${this.pk(modelName)} = ?`, [model[this.pk(modelName)]])
+                return this.query<any>(`UPDATE \`${modelName}\` SET ${relation} = 0 WHERE ${this.pk(modelName)} = ?`, [model[this.pk(modelName)]], transaction)
                     .then(updateResult => {
                         result.items = updateResult;
                         return result;
@@ -1316,7 +1274,7 @@ export class MySQL extends Database {
 
     }
 
-    private removeManyToManyRelation<T>(model: T, relation: string, condition: Condition): Promise<any> {
+    private removeManyToManyRelation<T>(model: T, relation: string, condition: Condition, transaction: Transaction): Promise<any> {
         let modelName = model.constructor['schema'].name;
         let relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         let isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
@@ -1365,11 +1323,11 @@ export class MySQL extends Database {
                     condition.append(new Condition(Condition.Operator.EqualTo).compare('id', ids[i]));
                 }
                 let idCondition = ids.length ? `(${ids.join(' OR ')})` : 'FALSE';
-                return this.query(`DELETE FROM ${modelName + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ? AND ${idCondition}`, [model[this.pk(modelName)]].concat(idConditionValues))
+                return this.query(`DELETE FROM ${modelName + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ? AND ${idCondition}`, [model[this.pk(modelName)]].concat(idConditionValues), transaction)
                     .then(() => {
                         let result = {items: ids};
                         if (isWeek && ids.length) {
-                            return this.deleteAll(relatedModelName, condition).then(() => result);
+                            return this.deleteAll(relatedModelName, condition, transaction).then(() => result);
                         }
                         return result;
                     });
@@ -1382,23 +1340,42 @@ export class MySQL extends Database {
         return this.connection.escape(value);
     }
 
-    public query<T>(query: string, data?: Array<number | string | Array<number | string>>): Promise<T> {
-        return new Promise((resolve, reject) => {
-            this.getConnection().then(connection => {
-                connection.query(query, data, (err, result) => {
-                    connection.release();
-                    if (err && err.fatal) {
-                        this.close(connection).then(() => reject(err)).catch(() => reject(err));
-                    }
-                    else if (err) {
-                        return reject(err);
-                    } else {
-                        resolve(<T>result);
-                    }
+    public query<T>(query: string, data?: Array<number | string | Array<number | string>>, transaction?: Transaction): Promise<T> {
+        if (!transaction) {
+            return new Promise((resolve, reject) => {
+                this.getConnection().then(connection => {
+                    connection.query(query, data, (err, result) => {
+                        connection.release();
+                        if (err && err.fatal) {
+                            this.close(connection).then(() => reject(err)).catch(() => reject(err));
+                        }
+                        else if (err) {
+                            return reject(err);
+                        } else {
+                            resolve(<T>result);
+                        }
+                    })
                 })
-            })
 
-        })
+            })
+        } else {
+            return this.prepareTransaction(transaction)
+                .then(transaction => new Promise<T>((resolve, reject) => {
+                        let connection: IConnection = <IConnection>transaction.connection;
+                        connection.query(query, data, (err, result) => {
+                            if (err && err.fatal) {
+                                reject(err)
+                            }
+                            else if (err) {
+                                return reject(err);
+                            } else {
+                                resolve(<T>result);
+                            }
+                        })
+                    })
+                );
+
+        }
     }
 
     public close(connection: IConnection): Promise<boolean> {
