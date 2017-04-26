@@ -187,7 +187,7 @@ export class MySQL implements Database {
     }
 
     public increase<T>(model: string, id: number | string, field: string, value: number, transaction?: Transaction): Promise<IQueryResult<T>> {
-        let start: Promise<Transaction> = !transaction ? Promise.resolve(null) : Promise.resolve(this.prepareTransaction(transaction));
+        let start: Promise<Transaction> = !transaction ? Promise.resolve(null) : this.prepareTransaction(transaction);
         return start.then(transaction => this.query(`UPDATE \`${model}\` SET \`${field}\` = \`${field}\` + (?) WHERE ${this.pk(model)} = ?`, [value, id], transaction))
             .then(data => {
                 return this.findById(model, id)
@@ -222,7 +222,7 @@ export class MySQL implements Database {
 
     public insertOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let localTransaction = !transaction;
-        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let analysedValue = this.getAnalysedValue<T>(model, value);
         let properties = [];
@@ -313,7 +313,7 @@ export class MySQL implements Database {
             return Promise.resolve(result);
         }
 
-        let prepare: Promise<Transaction> = transaction ? this.prepareTransaction(transaction) : Promise.resolve(null);
+        let prepare: Promise<Transaction> = transaction ? this.prepareTransaction(transaction).then(tr => transaction = tr) : Promise.resolve(null);
         return prepare.then(transaction => this.query<Array<T>>(`INSERT INTO ${model} (${fieldsName.join(',')}) VALUES ${insertList}`, null, transaction))
             .then(insertResult => {
                 result.items = insertResult;
@@ -393,7 +393,7 @@ export class MySQL implements Database {
 
     public updateOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let localTransaction = !transaction;
-        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let analysedValue = this.getAnalysedValue<T>(model, value);
         let properties = [];
@@ -453,7 +453,7 @@ export class MySQL implements Database {
 
     public updateAll<T>(model: string, newValues: T, condition: Condition, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let localTransaction = !transaction;
-        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
         let sqlCondition = this.getCondition(model, condition);
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let properties = [];
@@ -488,7 +488,7 @@ export class MySQL implements Database {
 
     public deleteOne(model: string, id: number | string, transaction?: Transaction): Promise<IDeleteResult> {
         let localTransaction = !transaction;
-        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
         let result: IDeleteResult = <IDeleteResult>{};
         let fields = this.schemaList[model].getFields();
         return prepare.then(transaction => this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} = ?`, [id], transaction))
@@ -513,7 +513,7 @@ export class MySQL implements Database {
 
     public deleteAll<T>(model: string, condition: Condition, transaction?: Transaction): Promise<IDeleteResult> {
         let localTransaction = !transaction;
-        let prepare: Promise<Transaction> = this.prepareTransaction(transaction);
+        let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
 
         let sqlCondition = this.getCondition(model, condition);
         let result: IDeleteResult = <IDeleteResult>{};
