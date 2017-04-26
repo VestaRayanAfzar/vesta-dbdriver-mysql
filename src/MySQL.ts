@@ -209,7 +209,7 @@ export class MySQL implements Database {
         return this.countByQuery(query);
     }
 
-    public countByQuery<T>(query: Vql): Promise<IQueryResult<T>> {
+    private countByQuery<T>(query: Vql): Promise<IQueryResult<T>> {
         let result: IQueryResult<T> = <IQueryResult<T>>{};
         let params: ICalculatedQueryOptions = this.getQueryParams(query);
         params.condition = params.condition ? 'WHERE ' + params.condition : '';
