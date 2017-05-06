@@ -6,7 +6,7 @@
     "outDir": "dist/"
   },
   "filesGlob": [
-    "**/*.ts"
+    "src/**/*.ts","test/**/*.ts"
   ],
   "exclude": [
     "node_modules",

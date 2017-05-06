@@ -3,11 +3,25 @@ import * as mysql from "mysql";
 import {IConnection, IConnectionConfig, IPool} from "mysql";
 import {
     Condition,
-    Database, DatabaseError, Err, Field, FieldType, IDatabaseConfig, IDeleteResult, IFieldProperties, IModelCollection,
+    Database,
+    DatabaseError,
+    Err,
+    Field,
+    FieldType,
+    IDatabaseConfig,
+    IDeleteResult,
+    IFieldProperties,
+    IModelCollection,
     IModelFields,
     IQueryOption,
     IQueryResult,
-    ISchemaList, IUpsertResult, Model, RelationType, Schema, Transaction, Vql
+    ISchemaList,
+    IUpsertResult,
+    Model,
+    RelationType,
+    Schema,
+    Transaction,
+    Vql
 } from "vesta-lib";
 
 interface ICalculatedQueryOptions {
@@ -32,8 +46,8 @@ export class MySQL implements Database {
     private schemaList: ISchemaList = {};
     private config: IMySQLConfig;
     private models: IModelCollection;
-    private primaryKeys: { [name: string]: string } = {};
-    private transactions: { [key: number]: IConnection };
+    private primaryKeys: {[name: string]: string} = {};
+    private transactions: {[key: number]: IConnection};
     private quote = '<#quote#>';
 
     public connect(force = false): Promise<Database> {
@@ -126,8 +140,7 @@ export class MySQL implements Database {
         })
     }
 
-
-    public findById<T>(model: string, id: number | string, option: IQueryOption = {}): Promise<IQueryResult<T>> {
+    private findById<T>(model: string, id: number | string, option: IQueryOption = {}): Promise<IQueryResult<T>> {
         let query = new Vql(model);
         query.where(new Condition(Condition.Operator.EqualTo).compare(this.pk(model), id));
         if (option.fields) query.select(...option.fields);
@@ -137,7 +150,7 @@ export class MySQL implements Database {
         return this.findByQuery(query);
     }
 
-    public findByModelValues<T>(model: string, modelValues: T, option: IQueryOption = {}): Promise<IQueryResult<T>> {
+    private findByModelValues<T>(model: string, modelValues: T, option: IQueryOption = {}): Promise<IQueryResult<T>> {
         let condition = new Condition(Condition.Operator.And);
         for (let i = 0, keys = Object.keys(modelValues), il = keys.length; i < il; i++) {
             condition.append((new Condition(Condition.Operator.EqualTo)).compare(keys[i], modelValues[keys[i]]));
@@ -152,7 +165,7 @@ export class MySQL implements Database {
         return this.findByQuery(query);
     }
 
-    public findByQuery<T>(query: Vql): Promise<IQueryResult<T>> {
+    private findByQuery<T>(query: Vql): Promise<IQueryResult<T>> {
         let params: ICalculatedQueryOptions = this.getQueryParams(query);
         let result: IQueryResult<T> = <IQueryResult<T>>{};
         params.condition = params.condition ? 'WHERE ' + params.condition : '';
@@ -185,6 +198,19 @@ export class MySQL implements Database {
             return this.countByQuery(<Vql>arg1);
         }
     }
+
+    public find<T>(query: Vql): Promise<IQueryResult<T>>
+    public find<T>(model: string, id: number | string, option?: IQueryOption): Promise<IQueryResult<T>>
+    public find<T>(model: string, modelValues: T, option?: IQueryOption): Promise<IQueryResult<T>>
+    public find<T>(arg1: string | Vql, arg2?: number | string | T, arg3?: IQueryOption): Promise<IQueryResult<T>> {
+        if ('string' == typeof arg1) {
+            if (+arg2) return this.findById<T>(arg1, <number | string>arg2, arg3);
+            else return this.findByModelValues<T>(arg1, <T>arg2, arg3);
+        } else {
+            return this.findByQuery(<Vql>arg1);
+        }
+    }
+
 
     public increase<T>(model: string, id: number | string, field: string, value: number, transaction?: Transaction): Promise<IQueryResult<T>> {
         let start: Promise<Transaction> = !transaction ? Promise.resolve(null) : this.prepareTransaction(transaction);
@@ -220,7 +246,18 @@ export class MySQL implements Database {
             })
     }
 
-    public insertOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
+    public insert<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>>
+    public insert<T>(model: string, values: Array<T>, transaction?: Transaction): Promise<IUpsertResult<T>>
+    public insert<T>(model: string, arg2: Array<T> | T, transaction?: Transaction): Promise<IUpsertResult<T>> {
+        if (arg2 instanceof Array) {
+            return this.insertAll<T>(model, <Array<T>>arg2, transaction)
+        } else {
+            return this.insertOne<T>(model, <T>arg2, transaction)
+        }
+    }
+
+
+    private insertOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let localTransaction = !transaction;
         let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
@@ -286,7 +323,7 @@ export class MySQL implements Database {
 
     }
 
-    public insertAll<T>(model: string, value: Array<T>, transaction?: Transaction): Promise<IUpsertResult<T>> {
+    private insertAll<T>(model: string, value: Array<T>, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let fields = this.schemaList[model].getFields();
         let fieldsName = [];
@@ -391,7 +428,17 @@ export class MySQL implements Database {
             })
     }
 
-    public updateOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
+    public update<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>>
+    public update<T>(model: string, newValues: T, condition: Condition, transaction?: Transaction): Promise<IUpsertResult<T>>
+    public update<T>(model: string, value: T, arg3?: Condition | Transaction, arg4?: Transaction): Promise<IUpsertResult<T>> {
+        if (arg3 instanceof Condition) {
+            return this.updateAll(model, value, <Condition>arg3, <Transaction>arg4)
+        } else {
+            return this.updateOne(model, value, <Transaction>arg3)
+        }
+    }
+
+    private updateOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let localTransaction = !transaction;
         let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
@@ -451,7 +498,7 @@ export class MySQL implements Database {
 
     }
 
-    public updateAll<T>(model: string, newValues: T, condition: Condition, transaction?: Transaction): Promise<IUpsertResult<T>> {
+    private updateAll<T>(model: string, newValues: T, condition: Condition, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let localTransaction = !transaction;
         let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
         let sqlCondition = this.getCondition(model, condition);
@@ -486,7 +533,22 @@ export class MySQL implements Database {
             });
     }
 
-    public deleteOne(model: string, id: number | string, transaction?: Transaction): Promise<IDeleteResult> {
+    public remove(model: string, id: number | string, transaction?: Transaction): Promise<IDeleteResult>
+    public remove(model: string, condition: Condition, transaction?: Transaction): Promise<IDeleteResult>
+    public remove(model: string, arg2: Condition | number | string, transaction?: Transaction): Promise<IDeleteResult> {
+        if ('string' == typeof arg2 || 'number' == typeof arg2) {
+            return this.deleteOne(model, <number | string>arg2, transaction);
+        } else if (arg2 instanceof Condition) {
+            return this.deleteAll(model, arg2, transaction);
+        } else {
+            return Promise.reject<IDeleteResult>({
+                error: new Err(Err.Code.WrongInput, 'invalid delete request'),
+                items: null
+            });
+        }
+    }
+
+    private deleteOne(model: string, id: number | string, transaction?: Transaction): Promise<IDeleteResult> {
         let localTransaction = !transaction;
         let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
         let result: IDeleteResult = <IDeleteResult>{};
@@ -511,7 +573,7 @@ export class MySQL implements Database {
             })
     }
 
-    public deleteAll<T>(model: string, condition: Condition, transaction?: Transaction): Promise<IDeleteResult> {
+    private deleteAll<T>(model: string, condition: Condition, transaction?: Transaction): Promise<IDeleteResult> {
         let localTransaction = !transaction;
         let prepare: Promise<Transaction> = this.prepareTransaction(transaction).then(tr => transaction = tr);
 
@@ -803,31 +865,20 @@ export class MySQL implements Database {
     private runReverseQueryOne2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field) {
         let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
         let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
-        let fields = [];
+        let fields = ['*'];
         if (typeof query.relations[i] != 'string') {
-            for (let j = query.relations[i]['fields'].length; j--;) {
-                query.relations[i]['fields'][j] = `${query.relations[i]['fields'][j]}`;
-            }
             fields = query.relations[i]['fields'];
-        } else {
-            fields = ['*']
         }
-        fields.push(`${reverseField.fieldName} as ${this.camelCase(relationName)}`);
-        fields.push(`${this.pk(query.model)} as ${this.camelCase(query.model)}`);
-        let vql = new Vql(relationship.model.schema.name);
-        if (fields && fields.length) vql.select(...fields);
-        let condition = new Condition(Condition.Operator.Or);
-        for (let i = 0; i < ids.length; i++) {
-            condition.append(new Condition(Condition.Operator.EqualTo).compare(reverseField.fieldName, ids[i]))
-        }
-        vql.where(condition);
-        return this.findByQuery(vql).then(result => {
-            let data = {};
-            data[relationName] = result.items;
-            return data;
-        })
-
-
+        let leftKey = this.camelCase(query.model);
+        let rightKey = this.camelCase(relationship.model.schema.name);
+        fields.push(`${reverseField.fieldName} as ${leftKey}`);
+        fields.push(`${this.pk(relationship.model.schema.name)} as ${rightKey}`);
+        return this.query(`SELECT ${fields.join(',')} FROM ${relationship.model.schema.name} WHERE ${reverseField.fieldName} IN (?)`, [ids])
+            .then(list => {
+                let data = {};
+                data[relationName] = list;
+                return data;
+            })
     };
 
     private runRelatedQueryMany2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field) {
@@ -1065,13 +1116,14 @@ export class MySQL implements Database {
         if (properties.type == FieldType.List || (properties.relation && properties.relation.type == RelationType.Many2Many) || (properties.relation && properties.relation.type == RelationType.Reverse)) {
             return '';
         }
+        let defaultRelation;
         if (properties.relation && (properties.relation.type == RelationType.One2One || properties.relation.type == RelationType.One2Many)) {
-            properties.default = 0
+            defaultRelation = true;
         }
+        let defaultValue = properties.type != FieldType.Boolean ? `'${defaultRelation ? 0 : properties.default}'` : !!properties.default;
         let columnSyntax = `\`${filed.fieldName}\` ${this.getType(properties)}`;
-        let defaultValue = properties.type != FieldType.Boolean ? `'${properties.default}'` : !!properties.default;
         columnSyntax += (properties.required && properties.type != FieldType.Relation) || properties.primary ? ' NOT NULL' : '';
-        columnSyntax += properties.default || properties.default === 0 || properties.default === '' ? ` DEFAULT ${defaultValue}` : '';
+        columnSyntax += properties.default || properties.default === 0 || properties.default === '' || defaultRelation ? ` DEFAULT ${defaultValue}` : '';
         columnSyntax += properties.unique ? ' UNIQUE ' : '';
         columnSyntax += properties.primary ? ' AUTO_INCREMENT ' : '';
         return columnSyntax;
@@ -1155,7 +1207,7 @@ export class MySQL implements Database {
         }
     }
 
-    private addOneToManyRelation<T, M>(model: T, relation: string, value: number | { [property: string]: any }, transaction?: Transaction): Promise<IUpsertResult<M>> {
+    private addOneToManyRelation<T, M>(model: T, relation: string, value: number | {[property: string]: any}, transaction?: Transaction): Promise<IUpsertResult<M>> {
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let modelName = model.constructor['schema'].name;
         let fields = this.schemaList[modelName].getFields();

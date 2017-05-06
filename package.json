@@ -33,7 +33,7 @@
   "dependencies": {
     "@types/mysql": "^0.0.32",
     "mysql": "^2.11.1",
-    "vesta-lib": "^0.2.2"
+    "vesta-lib": "^0.3.0-beta.4"
   },
   "devDependencies": {
     "@types/jasmine": "^2.5.47",

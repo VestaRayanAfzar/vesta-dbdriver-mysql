@@ -21,8 +21,8 @@ bignumber.js@3.1.2:
   resolved "https://registry.yarnpkg.com/bignumber.js/-/bignumber.js-3.1.2.tgz#f3bdb99ad5268a15fc1f0bed2fb018e2693fe236"
 
 coffee-script@>=1.0.1:
-  version "1.12.4"
-  resolved "https://registry.yarnpkg.com/coffee-script/-/coffee-script-1.12.4.tgz#fe1bced97fe1fb3927b998f2b45616e0658be1ff"
+  version "1.12.5"
+  resolved "https://registry.yarnpkg.com/coffee-script/-/coffee-script-1.12.5.tgz#809f4585419112bbfe46a073ad7543af18c27346"
 
 core-util-is@~1.0.0:
   version "1.0.2"
@@ -62,8 +62,8 @@ isarray@0.0.1:
   resolved "https://registry.yarnpkg.com/isarray/-/isarray-0.0.1.tgz#8a18acfca9a8f4177e09abfc6038939b05d1eedf"
 
 jasmine-core@^2.4.1:
-  version "2.5.2"
-  resolved "https://registry.yarnpkg.com/jasmine-core/-/jasmine-core-2.5.2.tgz#6f61bd79061e27f43e6f9355e44b3c6cab6ff297"
+  version "2.6.0"
+  resolved "https://registry.yarnpkg.com/jasmine-core/-/jasmine-core-2.6.0.tgz#95e80740cc4d2c16741750e8b79e53c7ee15056a"
 
 jasmine-growl-reporter@~0.0.2:
   version "0.0.3"
@@ -149,9 +149,9 @@ string_decoder@~0.10.x:
   version "1.8.3"
   resolved "https://registry.yarnpkg.com/underscore/-/underscore-1.8.3.tgz#4f3fb53b106e6097fcf9cb4109f2a5e9bdfa5022"
 
-vesta-lib@^0.3.0-beta.4:
-  version "0.3.0-beta.4"
-  resolved "https://registry.yarnpkg.com/vesta-lib/-/vesta-lib-0.3.0-beta.4.tgz#2c6d05c360b8ce344210d2eb2c308074d9df4c15"
+vesta-lib@0.3.0-beta.3:
+  version "0.3.0-beta.3"
+  resolved "https://registry.yarnpkg.com/vesta-lib/-/vesta-lib-0.3.0-beta.3.tgz#980acd4219a60a0db162b1966491303878db3fb7"
 
 "walkdir@>= 0.0.1":
   version "0.0.11"
