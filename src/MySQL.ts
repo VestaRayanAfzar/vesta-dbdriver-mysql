@@ -1,4 +1,3 @@
-///<reference path="../node_modules/vesta-lib/Condition.d.ts"/>
 import * as mysql from "mysql";
 import {IConnection, IConnectionConfig, IPool} from "mysql";
 import {
@@ -22,7 +21,7 @@ import {
     Schema,
     Transaction,
     Vql
-} from "vesta-lib";
+} from "@vesta/core";
 
 interface ICalculatedQueryOptions {
     limit: string,
@@ -351,9 +350,17 @@ export class MySQL implements Database {
         }
 
         let prepare: Promise<Transaction> = transaction ? this.prepareTransaction(transaction).then(tr => transaction = tr) : Promise.resolve(null);
-        return prepare.then(transaction => this.query<Array<T>>(`INSERT INTO ${model} (${fieldsName.join(',')}) VALUES ${insertList}`, null, transaction))
+        return prepare.then(transaction => this.query<any>(`INSERT INTO ${model} (${fieldsName.join(',')}) VALUES ${insertList}`, null, transaction))
             .then(insertResult => {
-                result.items = insertResult;
+                let lastId = insertResult.insertId;
+                let count = insertResult.affectedRows;
+                if (count != value.length) {
+                    throw "error in insert";
+                }
+                for (let i = count; i--;) {
+                    value[i][this.pk(model)] = lastId--;
+                }
+                result.items = value;
                 return result;
             })
             .catch(err => {
@@ -613,7 +620,7 @@ export class MySQL implements Database {
                 } else if (schemaFields[key].properties.type == FieldType.List) {
                     lists[<string>key] = value[<string>key]
                 } else {
-                    let thisValue: string | number = schemaFields[key].properties.type == FieldType.Object ? JSON.stringify(value[key]) : value[key].toString();
+                    let thisValue: any = schemaFields[key].properties.type == FieldType.Object ? JSON.stringify(value[key]) : value[key];
                     properties.push({field: key, value: thisValue})
                 }
             }
@@ -684,8 +691,8 @@ export class MySQL implements Database {
                     for (let j = 0; j < filedNameList.length; j++) {
 
                         if (typeof query.relations[i] == 'string' || query.relations[i]['fields'].indexOf(filedNameList[j]) >= 0) {
-                            if (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation ||
-                                (relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2One || relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2Many)) {
+                            if (relatedModelFields[filedNameList[j]].properties.type != FieldType.List && (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation ||
+                                (relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2One || relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2Many))) {
                                 modelFiledList.push(`'${this.quote}${filedNameList[j]}${this.quote}:','${this.quote}',COALESCE(c.${filedNameList[j]},''),'${this.quote}'`)
                             }
                         }
@@ -759,7 +766,7 @@ export class MySQL implements Database {
             modelFiledList.push(`'${this.quote}${field}${this.quote}:','${this.quote}',COALESCE(${field},''),'${this.quote}'`)
         }
         let modelAs = query.model[0].toLowerCase() + query.model.substr(1, query.model.length - 1);
-        return `(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${query.model}\` ${params.condition} ${params.orderBy} limit 1) as ${modelAs}`;
+        return `(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${query.model}\` ${params.condition} ${params.orderBy} limit 1) as \`${modelAs}\``;
     }
 
     private getCondition(model: string, condition: Condition) {
@@ -982,11 +989,8 @@ export class MySQL implements Database {
                     || fields[key].properties.relation.type == RelationType.One2One)))) {
                     list[i][key] = this.parseJson(list[i][key], fields[key].properties.type == FieldType.Object);
                 } else if (list[i].hasOwnProperty(key) && !fields.hasOwnProperty(key)) {
-                    try {
-                        list[i][key] = this.parseJson(list[i][key], true);
-                    }
-                    catch (e) {
-                    }
+                    let isObject = list[i][key] && list[i][key].indexOf && list[i][key].indexOf(this.quote) < 0;
+                    list[i][key] = this.parseJson(list[i][key], isObject);
                 }
             }
         }
@@ -995,15 +999,15 @@ export class MySQL implements Database {
 
     private parseJson(str, isObject = false) {
         if (typeof str == 'string' && str) {
-            if (!isObject) {
-                let replace = ['\\n', '”', '\\r', '\\t', '\\v', "’", '"'];
-                let search = [/\n/ig, /"/ig, /\r/ig, /\t/ig, /\v/ig, /'/ig, new RegExp(this.quote, 'gi')];
-                for (let i = 0; i < search.length; i++) {
-                    str = str.replace(search[i], replace[i]);
-                }
-            }
             let json;
             try {
+                if (!isObject) {
+                    let replace = ['\\n', '”', '\\r', '\\t', '\\v', "’", '"'];
+                    let search = [/\n/ig, /"/ig, /\r/ig, /\t/ig, /\v/ig, /'/ig, new RegExp(this.quote, 'gi')];
+                    for (let i = 0; i < search.length; i++) {
+                        str = str.replace(search[i], replace[i]);
+                    }
+                }
                 json = JSON.parse(str);
             } catch (e) {
                 json = str;

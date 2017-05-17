@@ -1,4 +1,4 @@
-import {Database, FieldType, Model, Schema} from "vesta-lib";
+import {Database, FieldType, Model, Schema} from "@vesta/core";
 import {RoleGroup, IRoleGroup} from "./RoleGroup";
 
 export enum UserGender {Male = 1, Female}

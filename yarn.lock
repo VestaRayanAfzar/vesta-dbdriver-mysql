@@ -16,6 +16,10 @@
   version "7.0.13"
   resolved "https://registry.yarnpkg.com/@types/node/-/node-7.0.13.tgz#1b0a53fe9ef9c3a5d061b126cc9b915bca43a3f5"
 
+"@vesta/core@^0.2.0":
+  version "0.2.0"
+  resolved "https://registry.yarnpkg.com/@vesta/core/-/core-0.2.0.tgz#b9da4058c0227adbb198c660ef7e23e26078c028"
+
 bignumber.js@3.1.2:
   version "3.1.2"
   resolved "https://registry.yarnpkg.com/bignumber.js/-/bignumber.js-3.1.2.tgz#f3bdb99ad5268a15fc1f0bed2fb018e2693fe236"
@@ -148,10 +152,6 @@ string_decoder@~0.10.x:
 "underscore@>= 1.3.1":
   version "1.8.3"
   resolved "https://registry.yarnpkg.com/underscore/-/underscore-1.8.3.tgz#4f3fb53b106e6097fcf9cb4109f2a5e9bdfa5022"
-
-vesta-lib@^0.3.0-beta.4:
-  version "0.3.0-beta.4"
-  resolved "https://registry.yarnpkg.com/vesta-lib/-/vesta-lib-0.3.0-beta.4.tgz#2c6d05c360b8ce344210d2eb2c308074d9df4c15"
 
 "walkdir@>= 0.0.1":
   version "0.0.11"

@@ -1,4 +1,4 @@
-import {Database, FieldType, Model, Schema} from "vesta-lib";
+import {Database, FieldType, Model, Schema} from "@vesta/core";
 import {IPermission, Permission} from "./Permission";
 
 export interface IRole {
