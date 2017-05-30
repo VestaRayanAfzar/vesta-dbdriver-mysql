@@ -2,12 +2,11 @@
   "compilerOptions": {
     "declaration": true,
     "module": "CommonJS",
-    "target": "es5",
+    "target": "es6",
     "outDir": "dist/"
   },
   "filesGlob": [
-    "typings/tsd.d.ts",
-    "**/*.ts"
+    "src/**/*.ts","test/**/*.ts"
   ],
   "exclude": [
     "node_modules",

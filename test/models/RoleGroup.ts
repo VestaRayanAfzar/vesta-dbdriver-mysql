@@ -1,7 +1,4 @@
-import {Model} from "vesta-schema/Model";
-import {Schema} from "vesta-schema/Schema";
-import {FieldType} from "vesta-schema/Field";
-import {Database} from "vesta-schema/Database";
+import {Database, FieldType, Model, Schema} from "@vesta/core";
 import {IRole, Role} from "./Role";
 
 export interface IRoleGroup {

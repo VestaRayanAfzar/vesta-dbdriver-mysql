@@ -1,7 +1,4 @@
-import {Schema} from "vesta-schema/Schema";
-import {FieldType} from "vesta-schema/Field";
-import {Model, IModelValues} from "vesta-schema/Model";
-import {Database} from "vesta-schema/Database";
+import {Database, FieldType, Model, Schema} from "@vesta/core";
 import {RoleGroup, IRoleGroup} from "./RoleGroup";
 
 export enum UserGender {Male = 1, Female}
@@ -33,7 +30,7 @@ export class User extends Model implements IUser {
     public image:File|string;
     public roleGroups:Array<number|IRoleGroup|RoleGroup> = [];
 
-    constructor(values?:IModelValues) {
+    constructor(values?:IUser) {
         super(User.schema, User.database);
         this.setValues(values);
     }

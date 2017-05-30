@@ -9,35 +9,35 @@ describe('Connection Test', function () {
     describe("connect to database test", function () {
         it('it should connect to database', function (done) {
             database.connect()
-                .then((db)=> {
+                .then((db) => {
                     expect(db).toEqual(database);
                     done();
                 })
-                .catch(err=>done(err.message))
+                .catch(err => done.fail(err.message))
         })
     });
     describe('end connection', function () {
         it('it should end the connection', function (done) {
-            database.connect().then(db=> {
+            database.connect().then(db => {
                 database.close()
-                    .then((result)=> {
+                    .then((result) => {
                         expect(result).toBeTruthy();
                         done();
                     })
-                    .catch(err=>done(err.message))
+                    .catch(err => done.fail(err.message))
             })
         });
     });
 
     describe('destroy connection', function () {
         it('it should destroy the connection', function (done) {
-            database.connect().then(db=> {
+            database.connect().then(db => {
                 database.close(true)
-                    .then((result)=> {
+                    .then((result) => {
                         expect(result).toBeTruthy();
                         done();
                     })
-                    .catch(err=>done(err.message))
+                    .catch(err => done.fail(err.message))
             })
         });
     });
