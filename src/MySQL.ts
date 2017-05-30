@@ -139,17 +139,17 @@ export class MySQL implements Database {
         })
     }
 
-    private findById<T>(model: string, id: number | string, option: IQueryOption = {}): Promise<IQueryResult<T>> {
+    private findById<T>(model: string, id: number | string, option: IQueryOption = {}, transaction?: Transaction): Promise<IQueryResult<T>> {
         let query = new Vql(model);
         query.where(new Condition(Condition.Operator.EqualTo).compare(this.pk(model), id));
         if (option.fields) query.select(...option.fields);
         if (option.relations) query.fetchRecordFor(...option.relations);
         query.orderBy = option.orderBy || [];
         query.limitTo(1);
-        return this.findByQuery(query);
+        return this.findByQuery(query, transaction);
     }
 
-    private findByModelValues<T>(model: string, modelValues: T, option: IQueryOption = {}): Promise<IQueryResult<T>> {
+    private findByModelValues<T>(model: string, modelValues: T, option: IQueryOption = {}, transaction?: Transaction): Promise<IQueryResult<T>> {
         let condition = new Condition(Condition.Operator.And);
         for (let i = 0, keys = Object.keys(modelValues), il = keys.length; i < il; i++) {
             condition.append((new Condition(Condition.Operator.EqualTo)).compare(keys[i], modelValues[keys[i]]));
@@ -161,19 +161,19 @@ export class MySQL implements Database {
         if (+option.limit) query.limitTo(option.limit);
         query.where(condition);
         query.orderBy = option.orderBy || [];
-        return this.findByQuery(query);
+        return this.findByQuery(query, transaction);
     }
 
-    private findByQuery<T>(query: Vql): Promise<IQueryResult<T>> {
+    private findByQuery<T>(query: Vql, transaction?: Transaction): Promise<IQueryResult<T>> {
         let params: ICalculatedQueryOptions = this.getQueryParams(query);
         let result: IQueryResult<T> = <IQueryResult<T>>{};
         params.condition = params.condition ? 'WHERE ' + params.condition : '';
         params.orderBy = params.orderBy ? 'ORDER BY ' + params.orderBy : '';
-        return this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.join} ${params.condition} ${params.orderBy} ${params.limit}`)
+        return this.query<Array<T>>(`SELECT ${params.fields} FROM \`${query.model}\` ${params.join} ${params.condition} ${params.orderBy} ${params.limit}`, null, transaction)
             .then(list => {
                 return Promise.all([
-                    this.getManyToManyRelation(list, query),
-                    this.getLists(list, query)
+                    this.getManyToManyRelation(list, query, transaction),
+                    this.getLists(list, query, transaction)
                 ]).then(() => list)
             })
             .then(list => {
@@ -188,26 +188,32 @@ export class MySQL implements Database {
             })
     }
 
-    public count<T>(model: string, modelValues: T, option?: IQueryOption): Promise<IQueryResult<T>>
-    public count<T>(query: Vql): Promise<IQueryResult<T>>
-    public count<T>(arg1: string | Vql, modelValues?: T, option?: IQueryOption): Promise<IQueryResult<T>> {
-        if ('string' == typeof arg1) {
-            return this.countByModelValues(<string>arg1, modelValues, option);
-        } else {
-            return this.countByQuery(<Vql>arg1);
-        }
+    public count<T>(model: string, modelValues: T, option?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>>
+    public count<T>(query: Vql, transaction?: Transaction): Promise<IQueryResult<T>>
+    public count<T>(arg1: string | Vql, modelValues?: T, option?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>> {
+        let prepare: Promise<IQueryResult<T>> = transaction ? this.prepareTransaction(transaction) : Promise.resolve(<Promise<IQueryResult<T>>>{});
+        return prepare.then(() => {
+            if ('string' == typeof arg1) {
+                return this.countByModelValues(<string>arg1, modelValues, option, transaction);
+            } else {
+                return this.countByQuery(<Vql>arg1, transaction);
+            }
+        });
     }
 
-    public find<T>(query: Vql): Promise<IQueryResult<T>>
-    public find<T>(model: string, id: number | string, option?: IQueryOption): Promise<IQueryResult<T>>
-    public find<T>(model: string, modelValues: T, option?: IQueryOption): Promise<IQueryResult<T>>
-    public find<T>(arg1: string | Vql, arg2?: number | string | T, arg3?: IQueryOption): Promise<IQueryResult<T>> {
-        if ('string' == typeof arg1) {
-            if (+arg2) return this.findById<T>(arg1, <number | string>arg2, arg3);
-            else return this.findByModelValues<T>(arg1, <T>arg2, arg3);
-        } else {
-            return this.findByQuery(<Vql>arg1);
-        }
+    public find<T>(query: Vql, transaction?: Transaction): Promise<IQueryResult<T>>
+    public find<T>(model: string, id: number | string, option?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>>
+    public find<T>(model: string, modelValues: T, option?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>>
+    public find<T>(arg1: string | Vql, arg2?: number | string | T, arg3?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>> {
+        let prepare: Promise<IQueryResult<T>> = transaction ? this.prepareTransaction(transaction) : Promise.resolve(<Promise<IQueryResult<T>>>{});
+        return prepare.then(() => {
+            if ('string' == typeof arg1) {
+                if (+arg2) return this.findById<T>(arg1, <number | string>arg2, arg3, transaction);
+                else return this.findByModelValues<T>(arg1, <T>arg2, arg3, transaction);
+            } else {
+                return this.findByQuery(<Vql>arg1, transaction);
+            }
+        })
     }
 
 
@@ -219,7 +225,7 @@ export class MySQL implements Database {
             })
     }
 
-    private countByModelValues<T>(model: string, modelValues: T, option: IQueryOption = {}): Promise<IQueryResult<T>> {
+    private countByModelValues<T>(model: string, modelValues: T, option: IQueryOption = {}, transaction?: Transaction): Promise<IQueryResult<T>> {
         let condition = new Condition(Condition.Operator.And);
         for (let i = 0, keys = Object.keys(modelValues), il = keys.length; i < il; i++) {
             condition.append((new Condition(Condition.Operator.EqualTo)).compare(keys[i], modelValues[keys[i]]));
@@ -231,14 +237,14 @@ export class MySQL implements Database {
         if (+option.limit) query.limitTo(option.limit);
         query.where(condition);
         query.orderBy = option.orderBy || [];
-        return this.countByQuery(query);
+        return this.countByQuery(query, transaction);
     }
 
-    private countByQuery<T>(query: Vql): Promise<IQueryResult<T>> {
+    private countByQuery<T>(query: Vql, transaction?: Transaction): Promise<IQueryResult<T>> {
         let result: IQueryResult<T> = <IQueryResult<T>>{};
         let params: ICalculatedQueryOptions = this.getQueryParams(query);
         params.condition = params.condition ? 'WHERE ' + params.condition : '';
-        return this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.join} ${params.condition}`)
+        return this.query(`SELECT COUNT(*) as total FROM \`${query.model}\` ${params.join} ${params.condition}`, null, transaction)
             .then(data => {
                 result.total = data[0]['total'];
                 return result;
@@ -788,7 +794,7 @@ export class MySQL implements Database {
         }
     }
 
-    private getManyToManyRelation(list: Array<any>, query: Vql) {
+    private getManyToManyRelation(list: Array<any>, query: Vql, transaction?: Transaction) {
         let ids = [];
 
         for (let i = list.length; i--;) {
@@ -801,13 +807,13 @@ export class MySQL implements Database {
                 let field = this.schemaList[query.model].getFields()[relationName];
                 let relationship = field.properties.relation;
                 if (relationship.type == RelationType.Many2Many) {
-                    relations.push(this.runRelatedQuery(query, i, ids))
+                    relations.push(this.runRelatedQuery(query, i, ids, transaction))
                 } else if (relationship.type == RelationType.Reverse) {
                     let reverseField = this.getReverseRelation(query, field);
                     if (reverseField.properties.relation.type == RelationType.One2Many || reverseField.properties.relation.type == RelationType.One2One) {
-                        relations.push(this.runReverseQueryOne2Many(query, i, ids, reverseField));
+                        relations.push(this.runReverseQueryOne2Many(query, i, ids, reverseField, transaction));
                     } else if (reverseField.properties.relation.type == RelationType.Many2Many) {
-                        relations.push(this.runRelatedQueryMany2Many(query, i, ids, reverseField));
+                        relations.push(this.runRelatedQueryMany2Many(query, i, ids, reverseField, transaction));
                     }
 
                 }
@@ -844,7 +850,7 @@ export class MySQL implements Database {
 
     }
 
-    private runRelatedQuery(query: Vql, i: number, ids: Array<number>) {
+    private runRelatedQuery(query: Vql, i: number, ids: Array<number>, transaction?: Transaction) {
         let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
         let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
         let fields = '*';
@@ -859,7 +865,7 @@ export class MySQL implements Database {
         return this.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
                 LEFT JOIN \`${query.model + 'Has' + this.pascalCase(relationName)}\` r 
                 ON (m.${this.pk(relationship.model.schema.name)} = r.${rightKey}) 
-                WHERE r.${leftKey} IN (?)`, [ids])
+                WHERE r.${leftKey} IN (?)`, [ids], transaction)
             .then(relatedList => {
                 let result = {};
                 result[relationName] = relatedList;
@@ -869,7 +875,7 @@ export class MySQL implements Database {
 
     };
 
-    private runReverseQueryOne2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field) {
+    private runReverseQueryOne2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field, transaction?: Transaction) {
         let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
         let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
         let fields = ['*'];
@@ -880,7 +886,7 @@ export class MySQL implements Database {
         let rightKey = this.camelCase(relationship.model.schema.name);
         fields.push(`${reverseField.fieldName} as ${leftKey}`);
         fields.push(`${this.pk(relationship.model.schema.name)} as ${rightKey}`);
-        return this.query(`SELECT ${fields.join(',')} FROM ${relationship.model.schema.name} WHERE ${reverseField.fieldName} IN (?)`, [ids])
+        return this.query(`SELECT ${fields.join(',')} FROM ${relationship.model.schema.name} WHERE ${reverseField.fieldName} IN (?)`, [ids], transaction)
             .then(list => {
                 let data = {};
                 data[relationName] = list;
@@ -888,7 +894,7 @@ export class MySQL implements Database {
             })
     };
 
-    private runRelatedQueryMany2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field) {
+    private runRelatedQueryMany2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field, transaction?: Transaction) {
         let relationName = typeof query.relations[i] == 'string' ? query.relations[i] : query.relations[i]['name'];
         let relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
         let fields = '*';
@@ -903,7 +909,7 @@ export class MySQL implements Database {
         return this.query(`SELECT ${fields},r.${leftKey},r.${rightKey}  FROM \`${relationship.model.schema.name}\` m 
                 LEFT JOIN \`${relationship.model.schema.name + 'Has' + this.pascalCase(reverseField.fieldName)}\` r 
                 ON (m.${this.pk(query.model)} = r.${rightKey}) 
-                WHERE r.${leftKey} IN (?)`, [ids])
+                WHERE r.${leftKey} IN (?)`, [ids], transaction)
             .then(relatedList => {
                 let result = {};
                 result[relationName] = relatedList;
@@ -930,10 +936,10 @@ export class MySQL implements Database {
         return relatedField;
     }
 
-    private getLists(list: Array<any>, query: Vql) {
+    private getLists(list: Array<any>, query: Vql, transaction?: Transaction) {
         let runListQuery = (listName) => {
             let name = query.model + this.pascalCase(listName) + 'List';
-            return this.query(`SELECT * FROM \`${name}\` WHERE fk IN (?)`, [ids])
+            return this.query(`SELECT * FROM \`${name}\` WHERE fk IN (?)`, [ids], transaction)
                 .then(listsData => {
                     return {
                         name: listName,
