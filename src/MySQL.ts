@@ -345,7 +345,12 @@ export class MySQL implements Database {
         for (let i = value.length; i--;) {
             let insertPart = [];
             for (let j = 0, jl = fieldsName.length; j < jl; j++) {
-                insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? this.escape(value[i][fieldsName[j]]) : '\'\'');
+                if (fields[fieldsName[j]].properties.type == FieldType.Object) {
+                    insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? this.escape(JSON.stringify(value[i][fieldsName[j]])) : '\'\'');
+                }
+                else {
+                    insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? this.escape(value[i][fieldsName[j]]) : '\'\'');
+                }
             }
             insertList.push(`(${insertPart.join(',')})`);
         }
@@ -502,8 +507,8 @@ export class MySQL implements Database {
         })
 
             .then((transaction) => properties.length ? this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ?`, propertiesData.concat([id]), transaction) : [])
+            .then(() => localTransaction ? transaction.commit() : true)
             .then(() => (<Promise<IUpsertResult<T>>>this.findById<T>(model, id)))
-            .then((result) => localTransaction ? transaction.commit().then(() => result) : result)
             .catch(err => {
                 let error = new Err(Err.Code.DBQuery, err && err.message);
                 return localTransaction ? transaction.rollback().then(() => Promise.reject(error)) : Promise.reject(error)
