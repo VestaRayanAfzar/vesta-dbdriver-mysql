@@ -1,6 +1,6 @@
 {
   "name": "@vesta/driver-mysql",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "private": true,
   "description": "Vesta Platform MySQL drievr based on Database Class",
   "keywords": [
@@ -32,12 +32,13 @@
   },
   "dependencies": {
     "@types/mysql": "^0.0.32",
-    "@vesta/core": "^0.2.5",
+    "@vesta/core": "^0.2.12",
     "mysql": "^2.11.1"
   },
   "devDependencies": {
     "@types/jasmine": "^2.5.47",
     "jasmine-core": "^2.4.1",
-    "jasmine-node": "^1.14.5"
+    "jasmine-node": "^1.14.5",
+    "typescript": "^2.5.3"
   }
 }

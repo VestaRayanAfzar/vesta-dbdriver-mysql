@@ -45,8 +45,8 @@ export class MySQL implements Database {
     private schemaList: ISchemaList = {};
     private config: IMySQLConfig;
     private models: IModelCollection;
-    private primaryKeys: {[name: string]: string} = {};
-    private transactions: {[key: number]: IConnection};
+    private primaryKeys: { [name: string]: string } = {};
+    private transactions: { [key: number]: IConnection };
     private quote = '<#quote#>';
 
     public connect(force = false): Promise<Database> {
@@ -110,7 +110,7 @@ export class MySQL implements Database {
         return pk;
     }
 
-    public init(): Promise<boolean> {
+    public init(): Promise<any> {
         let createSchemaPromise = this.initializeDatabase();
         for (let i = 0, schemaNames = Object.keys(this.schemaList), il = schemaNames.length; i < il; i++) {
             createSchemaPromise = createSchemaPromise.then(this.createTable(this.schemaList[schemaNames[i]]));
@@ -191,12 +191,12 @@ export class MySQL implements Database {
     public count<T>(model: string, modelValues: T, option?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>>
     public count<T>(query: Vql, transaction?: Transaction): Promise<IQueryResult<T>>
     public count<T>(arg1: string | Vql, modelValues?: T, option?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>> {
-        let prepare: Promise<IQueryResult<T>> = transaction ? this.prepareTransaction(transaction) : Promise.resolve(<Promise<IQueryResult<T>>>{});
+        let prepare: Promise<any> = transaction ? this.prepareTransaction(transaction) : Promise.resolve({});
         return prepare.then(() => {
             if ('string' == typeof arg1) {
-                return this.countByModelValues(<string>arg1, modelValues, option, transaction);
+                return this.countByModelValues<T>(<string>arg1, modelValues, option, transaction);
             } else {
-                return this.countByQuery(<Vql>arg1, transaction);
+                return this.countByQuery<T>(<Vql>arg1, transaction);
             }
         });
     }
@@ -205,23 +205,23 @@ export class MySQL implements Database {
     public find<T>(model: string, id: number | string, option?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>>
     public find<T>(model: string, modelValues: T, option?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>>
     public find<T>(arg1: string | Vql, arg2?: number | string | T, arg3?: IQueryOption, transaction?: Transaction): Promise<IQueryResult<T>> {
-        let prepare: Promise<IQueryResult<T>> = transaction ? this.prepareTransaction(transaction) : Promise.resolve(<Promise<IQueryResult<T>>>{});
+        let prepare: Promise<IQueryResult<T> | Transaction> = transaction ? this.prepareTransaction(transaction) : Promise.resolve(<Promise<IQueryResult<T>>>{});
         return prepare.then(() => {
             if ('string' == typeof arg1) {
                 if (+arg2) return this.findById<T>(arg1, <number | string>arg2, arg3, transaction);
                 else return this.findByModelValues<T>(arg1, <T>arg2, arg3, transaction);
             } else {
-                return this.findByQuery(<Vql>arg1, transaction);
+                return this.findByQuery<T>(<Vql>arg1, transaction);
             }
         })
     }
 
 
-    public increase<T>(model: string, id: number | string, field: string, value: number, transaction?: Transaction): Promise<IQueryResult<T>> {
+    public increase<T>(model: string, id: number | string, field: string, value: number, transaction?: Transaction): Promise<IUpsertResult<T>> {
         let start: Promise<Transaction> = !transaction ? Promise.resolve(null) : this.prepareTransaction(transaction);
         return start.then(transaction => this.query(`UPDATE \`${model}\` SET \`${field}\` = \`${field}\` + (?) WHERE ${this.pk(model)} = ?`, [value, id], transaction))
             .then(data => {
-                return this.findById(model, id)
+                return <Promise<IUpsertResult<T>>>this.findById<T>(model, id)
             })
     }
 
@@ -295,8 +295,8 @@ export class MySQL implements Database {
                 return localTransaction ? transaction.commit().then(() => result) : result
             })
             .catch(err => {
-                result.error = new Err(Err.Code.DBInsert, err && err.message);
-                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result);
+                let error = new Err(Err.Code.DBInsert, err && err.message);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(error)) : Promise.reject(error);
             });
     }
 
@@ -363,15 +363,15 @@ export class MySQL implements Database {
                 if (count != value.length) {
                     throw "error in insert";
                 }
-                for (let i = count; i--;) {
-                    value[i][this.pk(model)] = lastId--;
-                }
+                // for (let i = count; i--;) {
+                //     value[i][this.pk(model)] = lastId--;
+                // }
                 result.items = value;
                 return result;
             })
             .catch(err => {
-                result.error = new Err(Err.Code.DBInsert, err && err.message);
-                return Promise.reject(result)
+                let error = new Err(Err.Code.DBInsert, err && err.message);
+                return Promise.reject(error)
             });
 
     }
@@ -387,7 +387,7 @@ export class MySQL implements Database {
                 case RelationType.Many2Many:
                     return this.addManyToManyRelation(model, relation, value, transaction);
                 default:
-                    return Promise.resolve({});
+                    return Promise.resolve(<IUpsertResult<M>>{items: []});
             }
         }
         return Promise.reject(new Err(Err.Code.DBInsert, 'error in adding relation'));
@@ -502,11 +502,11 @@ export class MySQL implements Database {
         })
 
             .then((transaction) => properties.length ? this.query<Array<T>>(`UPDATE \`${model}\` SET ${properties.join(',')} WHERE ${this.pk(model)} = ?`, propertiesData.concat([id]), transaction) : [])
-            .then(() => this.findById(model, id))
+            .then(() => (<Promise<IUpsertResult<T>>>this.findById<T>(model, id)))
             .then((result) => localTransaction ? transaction.commit().then(() => result) : result)
             .catch(err => {
-                result.error = new Err(Err.Code.DBQuery, err && err.message);
-                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result)
+                let error = new Err(Err.Code.DBQuery, err && err.message);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(error)) : Promise.reject(error)
             });
 
     }
@@ -541,8 +541,8 @@ export class MySQL implements Database {
                 return localTransaction ? transaction.commit().then(() => result) : result;
             })
             .catch(err => {
-                result.error = new Err(Err.Code.DBUpdate, err && err.message);
-                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result);
+                let error = new Err(Err.Code.DBUpdate, err && err.message);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(error)) : Promise.reject(error);
             });
     }
 
@@ -581,8 +581,8 @@ export class MySQL implements Database {
             })
             .then(result => localTransaction ? transaction.commit().then(() => result) : result)
             .catch(err => {
-                result.error = new Err(Err.Code.DBDelete, err && err.message);
-                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result)
+                let error = new Err(Err.Code.DBDelete, err && err.message);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(error)) : Promise.reject(error)
             })
     }
 
@@ -607,8 +607,8 @@ export class MySQL implements Database {
                 return localTransaction ? transaction.commit().then(() => result) : result;
             })
             .catch(err => {
-                result.error = new Err(Err.Code.DBDelete, err && err.message);
-                return localTransaction ? transaction.rollback().then(() => Promise.reject(result)) : Promise.reject(result);
+                let error = new Err(Err.Code.DBDelete, err && err.message);
+                return localTransaction ? transaction.rollback().then(() => Promise.reject(error)) : Promise.reject(error);
             })
     }
 
@@ -698,7 +698,7 @@ export class MySQL implements Database {
 
                         if (typeof query.relations[i] == 'string' || query.relations[i]['fields'].indexOf(filedNameList[j]) >= 0) {
                             if (relatedModelFields[filedNameList[j]].properties.type != FieldType.List && (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation ||
-                                (relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2One || relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2Many))) {
+                                    (relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2One || relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2Many))) {
                                 modelFiledList.push(`'${this.quote}${filedNameList[j]}${this.quote}:','${this.quote}',COALESCE(c.${filedNameList[j]},''),'${this.quote}'`)
                             }
                         }
@@ -990,9 +990,9 @@ export class MySQL implements Database {
             for (let key in list[i]) {
                 if (list[i].hasOwnProperty(key) &&
                     fields.hasOwnProperty(key) && (fields[key].properties.type == FieldType.Object || (
-                    fields[key].properties.type == FieldType.Relation &&
-                    (fields[key].properties.relation.type == RelationType.One2Many
-                    || fields[key].properties.relation.type == RelationType.One2One)))) {
+                        fields[key].properties.type == FieldType.Relation &&
+                        (fields[key].properties.relation.type == RelationType.One2Many
+                            || fields[key].properties.relation.type == RelationType.One2One)))) {
                     list[i][key] = this.parseJson(list[i][key], fields[key].properties.type == FieldType.Object);
                 } else if (list[i].hasOwnProperty(key) && !fields.hasOwnProperty(key)) {
                     let isObject = list[i][key] && list[i][key].indexOf && list[i][key].indexOf(this.quote) < 0;
@@ -1032,7 +1032,7 @@ export class MySQL implements Database {
                 .then(() => {
                     return this.query(`CREATE TABLE \`${schema.name}\` (\n${createDefinition.ownColumn})\n ENGINE=InnoDB`)
                 });
-        let translateTablePromise = Promise.resolve(true);
+        let translateTablePromise: Promise<any> = Promise.resolve(true);
         if (createDefinition.lingualColumn) {
             translateTablePromise =
                 this.query(`DROP TABLE IF EXISTS ${schema.name}_translation`)
@@ -1217,7 +1217,7 @@ export class MySQL implements Database {
         }
     }
 
-    private addOneToManyRelation<T, M>(model: T, relation: string, value: number | {[property: string]: any}, transaction?: Transaction): Promise<IUpsertResult<M>> {
+    private addOneToManyRelation<T, M>(model: T, relation: string, value: number | { [property: string]: any }, transaction?: Transaction): Promise<IUpsertResult<M>> {
         let result: IUpsertResult<T> = <IUpsertResult<T>>{};
         let modelName = model.constructor['schema'].name;
         let fields = this.schemaList[modelName].getFields();
@@ -1397,6 +1397,7 @@ export class MySQL implements Database {
     }
 
     private escape(value): any {
+        if (value != value) value = 0;
         if (typeof value == 'number') return value;
         if (typeof value == 'boolean') return value ? 1 : 0;
         return this.connection.escape(value);
