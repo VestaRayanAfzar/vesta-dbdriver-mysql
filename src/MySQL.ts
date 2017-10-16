@@ -349,7 +349,12 @@ export class MySQL implements Database {
                     insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? this.escape(JSON.stringify(value[i][fieldsName[j]])) : '\'\'');
                 }
                 else {
-                    insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? this.escape(value[i][fieldsName[j]]) : '\'\'');
+                    let itemValue = value[i][fieldsName[j]];
+                    let isNum = false;
+                    if ([FieldType.Number, FieldType.Integer, FieldType.Timestamp, FieldType.Relation, FieldType.Enum].indexOf(fields[fieldsName[j]].properties.type) >= 0) {
+                        isNum = true;
+                    }
+                    insertPart.push(value[i].hasOwnProperty(fieldsName[j]) ? this.escape(itemValue) : (isNum ? 0 : '\'\''));
                 }
             }
             insertList.push(`(${insertPart.join(',')})`);
