@@ -152,7 +152,9 @@ export class MySQL implements Database {
     private findByModelValues<T>(model: string, modelValues: T, option: IQueryOption = {}, transaction?: Transaction): Promise<IQueryResult<T>> {
         let condition = new Condition(Condition.Operator.And);
         for (let i = 0, keys = Object.keys(modelValues), il = keys.length; i < il; i++) {
-            condition.append((new Condition(Condition.Operator.EqualTo)).compare(keys[i], modelValues[keys[i]]));
+            if (modelValues[keys[i]] !== undefined) {
+                condition.append((new Condition(Condition.Operator.EqualTo)).compare(keys[i], modelValues[keys[i]]));
+            }
         }
         let query = new Vql(model);
         if (option.fields) query.select(...option.fields);
@@ -484,7 +486,7 @@ export class MySQL implements Database {
                 let relation = relationsNames[i];
                 let relationValue = analysedValue.relations[relation];
                 // todo check if it is required
-                if (!relationValue) continue;
+                if (!relationValue && (relationValue !== 0)) continue;
                 switch (modelFields[relation].properties.relation.type) {
                     case RelationType.One2Many:
                     case RelationType.One2One:
@@ -493,12 +495,13 @@ export class MySQL implements Database {
                             let relatedModelName = modelFields[relation].properties.relation.model.schema.name;
                             fk = +relationValue[this.pk(relatedModelName)];
                         }
-                        if (fk) {
+                        if (fk || fk === 0) {
                             properties.push(`\`${relation}\` = ?`);
                             propertiesData.push(fk);
                         }
                         break;
                     case RelationType.Many2Many:
+                        if (!relationValue) continue;
                         steps.push(this.updateRelations(new this.models[model](value), relation, relationValue, transaction));
                         break;
                 }

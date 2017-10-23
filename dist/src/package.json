@@ -1,6 +1,6 @@
 {
   "name": "@vesta/driver-mysql",
-  "version": "0.1.7",
+  "version": "0.1.9",
   "description": "Vesta Platform MySQL drievr based on Database Class on @vesta/core",
   "keywords": [
     "NodeJS",
