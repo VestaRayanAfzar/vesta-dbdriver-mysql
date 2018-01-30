@@ -16,9 +16,9 @@
   version "7.0.13"
   resolved "https://registry.yarnpkg.com/@types/node/-/node-7.0.13.tgz#1b0a53fe9ef9c3a5d061b126cc9b915bca43a3f5"
 
-"@vesta/core@^0.2.12":
-  version "0.2.12"
-  resolved "https://registry.yarnpkg.com/@vesta/core/-/core-0.2.12.tgz#aa725bd9e1e21e62c07927229db160e5c51f6c72"
+"@vesta/core@^1.0.1":
+  version "1.0.1"
+  resolved "https://registry.yarnpkg.com/@vesta/core/-/core-1.0.1.tgz#c2bce274fcaa85d08b9b0d2aeea50e5460e2746c"
 
 bignumber.js@3.1.2:
   version "3.1.2"

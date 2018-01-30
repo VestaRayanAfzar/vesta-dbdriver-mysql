@@ -1,5 +1,5 @@
 import * as mysql from "mysql";
-import {IConnection, IConnectionConfig, IPool} from "mysql";
+import { IConnection, IConnectionConfig, IPool } from "mysql";
 import {
     Condition,
     Database,
@@ -22,6 +22,7 @@ import {
     Transaction,
     Vql
 } from "@vesta/core";
+import { isUndefined } from "util";
 
 interface ICalculatedQueryOptions {
     limit: string,
@@ -81,13 +82,15 @@ export class MySQL implements Database {
 
     constructor(config: IMySQLConfig, models: IModelCollection) {
         this.schemaList = {};
+        this.models = {};
         for (let model in models) {
             if (models.hasOwnProperty(model)) {
-                this.schemaList[model] = models[model].schema;
-                this.pk(model)
+                this.schemaList[models[model].schema.name] = models[model].schema;
+                this.models[models[model].schema.name] = models[model];
+                this.pk(models[model].schema.name)
             }
         }
-        this.models = models;
+        
         this.config = config;
         this.config.charset = this.config.charset || 'utf8mb4';
         this.config.collate = this.config.collate || 'utf8mb4_unicode_ci'
@@ -280,13 +283,13 @@ export class MySQL implements Database {
                 let steps = [];
                 for (let key in analysedValue.relations) {
                     if (analysedValue.relations.hasOwnProperty(key)) {
-                        steps.push(this.addRelation(new this.models[model]({id: insertResult['insertId']}), key, analysedValue.relations[key], transaction));
+                        steps.push(this.addRelation(new this.models[model]({ id: insertResult['insertId'] }), key, analysedValue.relations[key], transaction));
                     }
 
                 }
                 for (let key in analysedValue.lists) {
                     if (analysedValue.lists.hasOwnProperty(key)) {
-                        steps.push(this.addList(new this.models[model]({id: insertResult['insertId']}), key, analysedValue.lists[key], transaction));
+                        steps.push(this.addList(new this.models[model]({ id: insertResult['insertId'] }), key, analysedValue.lists[key], transaction));
                     }
                 }
                 let id = insertResult['insertId'];
@@ -368,7 +371,7 @@ export class MySQL implements Database {
         }
 
         let prepare: Promise<Transaction> = transaction ? this.prepareTransaction(transaction).then(tr => transaction = tr) : Promise.resolve(null);
-        return prepare.then(transaction => this.query<any>(`INSERT INTO ${model} (${fieldsName.join(',')}) VALUES ${insertList}`, null, transaction))
+        return prepare.then(transaction => this.query<any>(`INSERT INTO ${model} (${fieldsName.map(filed => '\`' + filed + '\`').join(',')}) VALUES ${insertList}`, null, transaction))
             .then(insertResult => {
                 let lastId = insertResult.insertId;
                 let count = insertResult.affectedRows;
@@ -391,7 +394,7 @@ export class MySQL implements Database {
     private addRelation<T, M>(model: T, relation: string, value: number | Array<number> | M | Array<M>, transaction?: Transaction): Promise<IUpsertResult<M>> {
         let modelName = model.constructor['schema'].name;
         let fields = this.schemaList[modelName].getFields();
-        if (fields[relation] && fields[relation].properties.type == FieldType.Relation && value) {
+        if (fields[relation] && fields[relation].properties.type == FieldType.Relation && (value || +value === 0)) {
             switch (fields[relation].properties.relation.type) {
                 case RelationType.One2Many:
                 case RelationType.One2One:
@@ -399,7 +402,7 @@ export class MySQL implements Database {
                 case RelationType.Many2Many:
                     return this.addManyToManyRelation(model, relation, value, transaction);
                 default:
-                    return Promise.resolve(<IUpsertResult<M>>{items: []});
+                    return Promise.resolve(<IUpsertResult<M>>{ items: [] });
             }
         }
         return Promise.reject(new Err(Err.Code.DBInsert, 'error in adding relation'));
@@ -508,7 +511,7 @@ export class MySQL implements Database {
             }
             for (let key in analysedValue.lists) {
                 if (analysedValue.lists.hasOwnProperty(key)) {
-                    steps.push(this.updateList(new this.models[model]({id: id}), key, analysedValue.lists[key], transaction));
+                    steps.push(this.updateList(new this.models[model]({ id: id }), key, analysedValue.lists[key], transaction));
                 }
             }
             return Promise.all<any>(steps).then(() => transaction)
@@ -640,7 +643,7 @@ export class MySQL implements Database {
                     lists[<string>key] = value[<string>key]
                 } else {
                     let thisValue: any = schemaFields[key].properties.type == FieldType.Object ? JSON.stringify(value[key]) : value[key];
-                    properties.push({field: key, value: thisValue})
+                    properties.push({ field: key, value: thisValue })
                 }
             }
         }
@@ -653,10 +656,10 @@ export class MySQL implements Database {
 
     private getQueryParams(query: Vql, alias: string = query.model): ICalculatedQueryOptions {
         let params: ICalculatedQueryOptions = <ICalculatedQueryOptions>{};
-        query.offset = query.offset ? query.offset : (query.page ? query.page - 1 : 0 ) * query.limit;
+        query.offset = query.offset ? query.offset : (query.page ? query.page - 1 : 0) * query.limit;
         params.limit = '';
         if (+query.limit) {
-            params.limit = `LIMIT ${query.offset ? +query.offset : 0 }, ${+query.limit} `;
+            params.limit = `LIMIT ${query.offset ? +query.offset : 0}, ${+query.limit} `;
         }
         params.orderBy = '';
         if (query.orderBy.length) {
@@ -711,7 +714,7 @@ export class MySQL implements Database {
 
                         if (typeof query.relations[i] == 'string' || query.relations[i]['fields'].indexOf(filedNameList[j]) >= 0) {
                             if (relatedModelFields[filedNameList[j]].properties.type != FieldType.List && (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation ||
-                                    (relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2One || relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2Many))) {
+                                (relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2One || relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2Many))) {
                                 modelFiledList.push(`'${this.quote}${filedNameList[j]}${this.quote}:','${this.quote}',COALESCE(c.${filedNameList[j]},''),'${this.quote}'`)
                             }
                         }
@@ -723,7 +726,7 @@ export class MySQL implements Database {
         }
         params.condition = '';
         if (query.condition) {
-            params.condition = this.getCondition(alias, query.condition);
+            params.condition = this.getCondition(query.model, query.condition, alias);
             params.condition = params.condition ? params.condition : '';
         }
         params.join = '';
@@ -733,23 +736,23 @@ export class MySQL implements Database {
                 let join = query.joins[i];
                 let type = '';
                 switch (join.type) {
-                    case Vql.Join :
+                    case Vql.Join:
                         type = 'FULL OUTER JOIN';
                         break;
-                    case Vql.LeftJoin :
+                    case Vql.LeftJoin:
                         type = 'LEFT JOIN';
                         break;
-                    case Vql.RightJoin :
+                    case Vql.RightJoin:
                         type = 'RIGHT JOIN';
                         break;
-                    case Vql.InnerJoin :
+                    case Vql.InnerJoin:
                         type = 'INNER JOIN';
                         break;
-                    default :
+                    default:
                         type = 'LEFT JOIN';
                 }
-                let modelsAlias = join.vql.model;// + '__' + Math.floor(Math.random() * 100).toString(); // creating alias need refactoring some part code so i ignored it for this time.
-                if (this.models[alias].schema.getField(join.field) && this.models[modelsAlias]) {
+                let modelsAlias = join.vql.model + '_' + join.field;// + '__' + Math.floor(Math.random() * 100).toString(); // creating alias need refactoring some part code so i ignored it for this time.
+                if (this.models[alias].schema.getField(join.field) && this.models[join.vql.model]) {
                     joins.push(`${type} ${join.vql.model} as ${modelsAlias} ON (${alias}.${join.field} = ${modelsAlias}.${this.pk(join.vql.model)})`);
                     let joinParam = this.getQueryParams(join.vql, modelsAlias);
                     if (joinParam.fields) {
@@ -788,14 +791,14 @@ export class MySQL implements Database {
         return `(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${query.model}\` ${params.condition} ${params.orderBy} limit 1) as \`${modelAs}\``;
     }
 
-    private getCondition(model: string, condition: Condition) {
+    private getCondition(model: string, condition: Condition, alias: string = model) {
         model = condition.model || model;
         let operator = this.getOperatorSymbol(condition.operator);
         if (!condition.isConnector) {
             if (!this.models[model].schema.getField(condition.comparison.field)) {
                 return '';
             }
-            return `(\`${model}\`.${condition.comparison.field} ${operator} ${condition.comparison.isValueOfTypeField ? condition.comparison.value : `${this.escape(condition.comparison.value)}`})`;
+            return `(\`${alias}\`.${condition.comparison.field} ${operator} ${condition.comparison.isValueOfTypeField ? condition.comparison.value : `${this.escape(isUndefined(condition.comparison.value.id) ? condition.comparison.value : +condition.comparison.value.id)}`})`;
         } else {
             let childrenCondition = [];
             for (let i = 0; i < condition.children.length; i++) {
@@ -1165,7 +1168,7 @@ export class MySQL implements Database {
             case FieldType.URL:
             case FieldType.String:
                 if (!properties.primary) {
-                    typeSyntax = `VARCHAR(${properties.maxLength ? properties.maxLength : 255 })`;
+                    typeSyntax = `VARCHAR(${properties.maxLength ? properties.maxLength : 255})`;
                 } else {
                     typeSyntax = 'BIGINT';
                 }
@@ -1239,13 +1242,13 @@ export class MySQL implements Database {
         if (fields[relation].properties.relation.isWeek && typeof value == 'object' && !value[this.pk(relatedModelName)]) {
             readIdPromise = this.insertOne(relatedModelName, value, transaction).then(result => result.items[0][this.pk(relatedModelName)])
         } else {
-            let id;
-            if (+value) {
+            let id = 0;
+            if (+value || +value === 0) {
                 id = +value;
             } else if (typeof value == 'object') {
                 id = +value[this.pk(relatedModelName)]
             }
-            if (!id || id <= 0) return Promise.reject(new Error(`invalid <<${relation}>> related model id`));
+            if (id < 0) return Promise.reject(new Error(`invalid <<${relation}>> related model id`));
             readIdPromise = Promise.resolve(id);
         }
         return readIdPromise
@@ -1400,7 +1403,7 @@ export class MySQL implements Database {
                 let idCondition = ids.length ? `(${ids.join(' OR ')})` : 'FALSE';
                 return this.query(`DELETE FROM ${modelName + 'Has' + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ? AND ${idCondition}`, [model[this.pk(modelName)]].concat(idConditionValues), transaction)
                     .then(() => {
-                        let result = {items: ids};
+                        let result = { items: ids };
                         if (isWeek && ids.length) {
                             return this.deleteAll(relatedModelName, condition, transaction).then(() => result);
                         }
@@ -1437,18 +1440,18 @@ export class MySQL implements Database {
         } else {
             return this.prepareTransaction(transaction)
                 .then(transaction => new Promise<T>((resolve, reject) => {
-                        let connection: IConnection = <IConnection>transaction.connection;
-                        connection.query(query, data, (err, result) => {
-                            if (err && err.fatal) {
-                                reject(err)
-                            }
-                            else if (err) {
-                                return reject(err);
-                            } else {
-                                resolve(<T>result);
-                            }
-                        })
+                    let connection: IConnection = <IConnection>transaction.connection;
+                    connection.query(query, data, (err, result) => {
+                        if (err && err.fatal) {
+                            reject(err)
+                        }
+                        else if (err) {
+                            return reject(err);
+                        } else {
+                            resolve(<T>result);
+                        }
                     })
+                })
                 );
 
         }
