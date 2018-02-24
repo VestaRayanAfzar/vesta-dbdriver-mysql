@@ -1,0 +1,14 @@
+{
+    "extends": [
+        "tslint:recommended"
+    ],
+    "rules": {
+        "array-type": [
+            true,
+            "generic"
+        ],
+        "triple-equals": false,
+        "no-empty-interface": false,
+        "comment-format": false
+    }
+}

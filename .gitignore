@@ -1,7 +1,5 @@
 .idea
-tsd-debug.*
-npm-debug.*
+.vscode
+npm-debug.log
 /node_modules
-/typings
-/dist/**/*.js
-/dist/**/*.d.ts
+/vesta

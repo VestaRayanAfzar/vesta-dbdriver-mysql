@@ -1,6 +1,0 @@
-.idea
-tsd-debug.*
-npm-debug.*
-/node_modules
-/src
-/typings
