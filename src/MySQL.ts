@@ -19,9 +19,15 @@ import {
     RelationType,
     Schema,
     Transaction,
-    Vql
+    Vql,
+    IModel
 } from "@vesta/core";
 import { isUndefined } from "util";
+
+interface IRelation {
+    name: string;
+    fields: Array<string>;
+}
 
 interface ICalculatedQueryOptions {
     limit: string,
@@ -479,7 +485,7 @@ export class MySQL implements Database {
     }
 
     private addRelation<T, M>(model: T, relation: string, value: number | Array<number> | M | Array<M>, transaction?: Transaction): Promise<IUpsertResult<M>> {
-        const modelName = model.constructor.schema.name;
+        const modelName = (<IModel>model.constructor).schema.name;
         const fields = this.schemaList[modelName].getFields();
         if (fields[relation] && fields[relation].properties.type == FieldType.Relation && (value || +value === 0)) {
             switch (fields[relation].properties.relation.type) {
@@ -495,7 +501,7 @@ export class MySQL implements Database {
     }
 
     private removeRelation<T>(model: T, relation: string, condition?: Condition | number | Array<number>, transaction?: Transaction): Promise<any> {
-        const modelName = model.constructor.schema.name;
+        const modelName = (<IModel>model.constructor).schema.name;
         const relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         let safeCondition: Condition;
         if (typeof condition == "number") {
@@ -524,7 +530,7 @@ export class MySQL implements Database {
     }
 
     private updateRelations(model: Model, relation, relatedValues, transaction?: Transaction) {
-        const modelName = model.constructor.schema.name;
+        const modelName = (<IModel>model.constructor).schema.name;
         const relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         const ids = [0];
         if (relatedValues instanceof Array) {
@@ -755,7 +761,7 @@ export class MySQL implements Database {
         }
 
         for (let i = 0; i < query.relations.length; i++) {
-            const relationName: string = typeof query.relations[i] == "string" ? query.relations[i] : query.relations[i].name;
+            const relationName: string = typeof query.relations[i] == "string" ? <string>query.relations[i] : (<IRelation>query.relations[i]).name;
             const field: Field = modelFields[relationName];
             if (!field) {
                 throw new Error(`FIELD ${relationName} NOT FOUND IN model ${query.model} as ${alias}`);
@@ -768,7 +774,7 @@ export class MySQL implements Database {
                     const relatedModelFields = properties.relation.model.schema.getFields();
                     for (let j = 0; j < filedNameList.length; j++) {
 
-                        if (typeof query.relations[i] == "string" || query.relations[i].fields.indexOf(filedNameList[j]) >= 0) {
+                        if (typeof query.relations[i] == "string" || (<IRelation>query.relations[i]).fields.indexOf(filedNameList[j]) >= 0) {
                             if (relatedModelFields[filedNameList[j]].properties.type != FieldType.List && (relatedModelFields[filedNameList[j]].properties.type != FieldType.Relation ||
                                 relatedModelFields[filedNameList[j]].properties.relation.type == RelationType.One2Many)) {
                                 modelFiledList.push(`'${this.quote}${filedNameList[j]}${this.quote}:','${this.quote}',COALESCE(c.${filedNameList[j]},''),'${this.quote}'`);
@@ -877,7 +883,7 @@ export class MySQL implements Database {
         const relations: Array<Promise<any>> = [];
         if (ids.length && query.relations && query.relations.length) {
             for (let i = query.relations.length; i--;) {
-                const relationName = typeof query.relations[i] == "string" ? query.relations[i] : query.relations[i].name;
+                const relationName = typeof query.relations[i] == "string" ? <string>query.relations[i] : (<IRelation>query.relations[i]).name;
                 const field = this.schemaList[query.model].getFields()[relationName];
                 const relationship = field.properties.relation;
                 if (relationship.type == RelationType.Many2Many) {
@@ -925,14 +931,14 @@ export class MySQL implements Database {
     }
 
     private runRelatedQuery(query: Vql, i: number, ids: Array<number>, transaction?: Transaction) {
-        const relationName = typeof query.relations[i] == "string" ? query.relations[i] : query.relations[i].name;
+        const relationName = typeof query.relations[i] == "string" ? <string>query.relations[i] : (<IRelation>query.relations[i]).name;
         const relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
         let fields = "*";
         if (typeof query.relations[i] != "string") {
-            for (let j = query.relations[i].fields.length; j--;) {
-                query.relations[i].fields[j] = `m.${query.relations[i].fields[j]}`;
+            for (let j = (<IRelation>query.relations[i]).fields.length; j--;) {
+                (<IRelation>query.relations[i]).fields[j] = `m.${(<IRelation>query.relations[i]).fields[j]}`;
             }
-            fields = query.relations[i].fields.join(",");
+            fields = (<IRelation>query.relations[i]).fields.join(",");
         }
         const leftKey = this.camelCase(query.model);
         const rightKey = this.camelCase(relationship.model.schema.name);
@@ -949,11 +955,11 @@ export class MySQL implements Database {
     }
 
     private runReverseQueryOne2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field, transaction?: Transaction) {
-        const relationName = typeof query.relations[i] == "string" ? query.relations[i] : query.relations[i].name;
+        const relationName = typeof query.relations[i] == "string" ? <string>query.relations[i] : (<IRelation>query.relations[i]).name;
         const relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
         let fields = ["*"];
         if (typeof query.relations[i] != "string") {
-            fields = query.relations[i].fields;
+            fields = (<IRelation>query.relations[i]).fields;
         }
         const leftKey = this.camelCase(query.model);
         const rightKey = this.camelCase(relationship.model.schema.name);
@@ -968,14 +974,14 @@ export class MySQL implements Database {
     }
 
     private runRelatedQueryMany2Many(query: Vql, i: number, ids: Array<number>, reverseField: Field, transaction?: Transaction) {
-        const relationName = typeof query.relations[i] == "string" ? query.relations[i] : query.relations[i].name;
+        const relationName = typeof query.relations[i] == "string" ? <string>query.relations[i] : (<IRelation>query.relations[i]).name;
         const relationship = this.schemaList[query.model].getFields()[relationName].properties.relation;
         let fields = "*";
         if (typeof query.relations[i] != "string") {
-            for (let j = query.relations[i].fields.length; j--;) {
-                query.relations[i].fields[j] = `m.${query.relations[i].fields[j]}`;
+            for (let j = (<IRelation>query.relations[i]).fields.length; j--;) {
+                (<IRelation>query.relations[i]).fields[j] = `m.${(<IRelation>query.relations[i]).fields[j]}`;
             }
-            fields = query.relations[i].fields.join(",");
+            fields = (<IRelation>query.relations[i]).fields.join(",");
         }
         const leftKey = this.camelCase(query.model);
         const rightKey = this.camelCase(relationship.model.schema.name);
@@ -1282,7 +1288,7 @@ export class MySQL implements Database {
 
     private addOneToManyRelation<T, M>(model: T, relation: string, value: number | { [property: string]: any }, transaction?: Transaction): Promise<IUpsertResult<M>> {
         const result: IUpsertResult<T> = {} as IUpsertResult<T>;
-        const modelName = model.constructor.schema.name;
+        const modelName = (<IModel>model.constructor).schema.name;
         const fields = this.schemaList[modelName].getFields();
         const relatedModelName = fields[relation].properties.relation.model.schema.name;
         let readIdPromise;
@@ -1316,7 +1322,7 @@ export class MySQL implements Database {
 
     private addManyToManyRelation<T, M>(model: T, relation: string, value: number | Array<number> | M | Array<M>, transaction?: Transaction): Promise<IUpsertResult<M>> {
         const result: IUpsertResult<M> = {} as IUpsertResult<M>;
-        const modelName = model.constructor.schema.name;
+        const modelName = (<IModel>model.constructor).schema.name;
         const fields = this.schemaList[modelName].getFields();
         const relatedModelName = fields[relation].properties.relation.model.schema.name;
         const newRelation = [];
@@ -1374,7 +1380,7 @@ export class MySQL implements Database {
     }
 
     private removeOneToManyRelation<T>(model: T, relation: string, transaction: Transaction) {
-        const modelName = model.constructor.schema.name;
+        const modelName = (<IModel>model.constructor).schema.name;
         const result: IUpsertResult<T> = {} as IUpsertResult<T>;
         const relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         const isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
@@ -1401,7 +1407,7 @@ export class MySQL implements Database {
     }
 
     private removeManyToManyRelation<T>(model: T, relation: string, condition: Condition, transaction: Transaction): Promise<any> {
-        const modelName = model.constructor.schema.name;
+        const modelName = (<IModel>model.constructor).schema.name;
         const relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
         const isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
         let preparePromise: Promise<any>;
