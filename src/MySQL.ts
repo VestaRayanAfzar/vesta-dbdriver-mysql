@@ -532,19 +532,18 @@ export class MySQL implements Database {
     private updateRelations(model: Model, relation, relatedValues, transaction?: Transaction) {
         const modelName = (model.constructor as IModel).schema.name;
         const relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
+        const isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
         const ids = [0];
         if (relatedValues instanceof Array) {
             for (let i = relatedValues.length; i--;) {
                 if (relatedValues[i]) {
-                    ids.push(typeof relatedValues[i] == "object" ? relatedValues[i][this.pk(relatedModelName)] : relatedValues[i]);
+                    ids.push(typeof relatedValues[i] == "object" && relatedValues[i][this.pk(relatedModelName)] ? relatedValues[i][this.pk(relatedModelName)] : relatedValues[i]);
                 }
             }
         }
         return this.query(`DELETE FROM ${this.pascalCase(modelName)}Has${this.pascalCase(relation)}
                     WHERE ${this.camelCase(modelName)} = ?`, [model[this.pk(modelName)]], transaction)
-            .then(() => {
-                return this.addRelation(model, relation, ids, transaction);
-            });
+            .then(() => this.addRelation(model, relation, ids, transaction));
     }
 
     private updateOne<T>(model: string, value: T, transaction?: Transaction): Promise<IUpsertResult<T>> {
