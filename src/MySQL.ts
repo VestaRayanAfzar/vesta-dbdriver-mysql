@@ -1346,7 +1346,8 @@ export class MySQL implements Database {
                 if (!newRelation.length) {
                     return relationIds;
                 }
-                return this.insertAll(relatedModelName, newRelation, transaction)
+                return Promise.all(newRelation.map(value => this.insertOne(relatedModelName, value, transaction).then(result => result.items[0]))).then(items => { return { items } })
+                    // return this.insertAll(relatedModelName, newRelation, transaction)
                     .then((result) => {
                         for (let i = result.items.length; i--;) {
                             relationIds.push(result.items[i][this.pk(relatedModelName)]);
