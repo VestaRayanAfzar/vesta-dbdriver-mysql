@@ -1301,7 +1301,7 @@ export class MySQL implements Database {
             } else if (typeof value == "object") {
                 id = +value[this.pk(relatedModelName)];
             }
-            if (!id || id <= 0) {
+            if (id !== 0 && (!id || id < 0)) {
                 return Promise.reject(new Err(Err.Code.DBRelation, `invalid <<${relation}>> related model id`));
             }
             readIdPromise = Promise.resolve(id);
