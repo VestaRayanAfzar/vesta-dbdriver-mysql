@@ -1,14 +1,18 @@
 {
   "compilerOptions": {
-    "allowSyntheticDefaultImports": true,
-    "declaration": true,
+    "target": "es6",
     "module": "commonjs",
+    "lib": ["esnext","dom"],
+    "outDir": ".",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "declaration": true,
     "moduleResolution": "node",
     "noEmitHelpers": true,
-    "outDir": ".",
+    "strictPropertyInitialization": false,
     "removeComments": true,
     "sourceMap": false,
-    "target": "es6"
+    "noImplicitAny": false
   },
   "include": [
     "src/**/*.ts"

@@ -21,6 +21,7 @@ import {
 } from "@vesta/core";
 import { Connection, ConnectionConfig, createPool, Pool, PoolConnection } from "mysql";
 import { isUndefined } from "util";
+import { resolve } from "path";
 
 interface IRelation {
     name: string;
@@ -69,11 +70,11 @@ export class MySQL implements Database {
         this.config.collate = this.config.collate || "utf8mb4_unicode_ci";
     }
 
-    public connect(force = false): Promise<Database> {
+    public connect(force = false): Promise<MySQL> {
         if (this.connection && !force) {
             return Promise.resolve(this);
         }
-        return new Promise<Database>((resolve, reject) => {
+        return new Promise<MySQL>((resolve, reject) => {
             if (!this.pool || force) {
                 this.pool = createPool({
                     charset: this.config.collate,
@@ -208,20 +209,23 @@ export class MySQL implements Database {
     public close(connection: Connection): Promise<boolean> {
         return new Promise((resolve, reject) => {
             if (connection) {
-                connection.end((err) => {
-                    if (err) {
-                        connection.destroy();
-                    }
-                    resolve(true);
-                });
-            } else {
-                resolve(true);
+                (connection as any).release();
             }
+            resolve(true);
 
         });
     }
 
-    private getConnection(): Promise<PoolConnection> {
+    public closePool():Promise<boolean>{
+        return new Promise((resolve,reject)=>{
+            this.pool.end(err=>{
+                if(err) reject(err);
+                resolve(true);               
+            })
+        })
+    }
+
+    public getConnection(): Promise<PoolConnection> {
         return new Promise<PoolConnection>((resolve, reject) => {
             this.pool.getConnection((err, connection) => {
                 if (err) { return reject(new DatabaseError(Err.Code.DBConnection, err)); }
@@ -1322,7 +1326,7 @@ export class MySQL implements Database {
         const fields = this.schemaList[modelName].getFields();
         const relatedModelName = fields[relation].properties.relation.model.schema.name;
         const newRelation = [];
-        const relationIds = [];
+        const relationIds:number[] = [];
         if (+value > 0) {
             relationIds.push(+value);
         } else if (value instanceof Array) {
@@ -1343,7 +1347,7 @@ export class MySQL implements Database {
                 if (!newRelation.length) {
                     return relationIds;
                 }
-                return Promise.all(newRelation.map(value => this.insertOne(relatedModelName, value, transaction).then(result => result.items[0]))).then(items => { return { items } })
+                return Promise.all(newRelation.map(value => this.insertOne<Model>(relatedModelName, value, transaction).then(result => result.items[0]))).then(items => { return { items } })
                     // return this.insertAll(relatedModelName, newRelation, transaction)
                     .then((result) => {
                         for (let i = result.items.length; i--;) {
@@ -1358,12 +1362,12 @@ export class MySQL implements Database {
                     result.items = [];
                     return result;
                 }
-                const insertList = [];
+                const insertList:string[] = [];
                 for (let i = relationIds.length; i--;) {
                     insertList.push(`(${model[this.pk(modelName)]},${this.escape(relationIds[i])})`);
                 }
                 return this.query<any>(`INSERT INTO ${modelName}Has${this.pascalCase(relation)}
-                    (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(",")}`, null, transaction)
+                    (\`${this.camelCase(modelName)}\`,\`${this.camelCase(relatedModelName)}\`) VALUES ${insertList.join(",")}`, undefined, transaction)
                     .then((insertResult) => {
                         result.items = insertResult;
                         return result;
@@ -1379,11 +1383,12 @@ export class MySQL implements Database {
     private removeOneToManyRelation<T>(model: T, relation: string, transaction: Transaction) {
         const modelName = (model.constructor as IModel).schema.name;
         const result: IResponse<T> = {} as IResponse<T>;
-        const relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
-        const isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
+        const relatedInfo = this.schemaList[modelName].getFields()[relation].properties.relation;
+        const relatedModelName = relatedInfo ? relatedInfo.model.schema.name : '';
+        const isWeek = relatedInfo ? relatedInfo.isWeek : false;
         const preparePromise: Promise<number> = Promise.resolve(0);
         if (isWeek) {
-            const readRelationId: Promise<number> = +model[relation] ? Promise.resolve(+model[relation]) : this.findById(modelName, model[this.pk(modelName)]).then((result) => result.items[0][relation]);
+            const readRelationId: Promise<number> = +model[relation] ? Promise.resolve(+model[relation]) : this.findById(modelName, model[this.pk(modelName)]).then((result) => result.items ? result.items[0][relation]: 0);
             readRelationId.then((relationId) => {
                 return this.deleteOne(relatedModelName, relationId, transaction).then(() => relationId);
             });
@@ -1405,8 +1410,9 @@ export class MySQL implements Database {
 
     private removeManyToManyRelation<T>(model: T, relation: string, condition: Condition, transaction: Transaction): Promise<any> {
         const modelName = (model.constructor as IModel).schema.name;
-        const relatedModelName = this.schemaList[modelName].getFields()[relation].properties.relation.model.schema.name;
-        const isWeek = this.schemaList[modelName].getFields()[relation].properties.relation.isWeek;
+        const relationInfo = this.schemaList[modelName].getFields()[relation].properties.relation;
+        const relatedModelName = relationInfo ? relationInfo.model.schema.name : '';
+        const isWeek = relationInfo ? relationInfo.isWeek : false;
         let preparePromise: Promise<any>;
         if (condition) {
             const vql = new Vql(relatedModelName);
@@ -1418,9 +1424,9 @@ export class MySQL implements Database {
 
         return preparePromise
             .then((result) => {
-                const conditions = [];
+                const conditions:string[] = [];
                 let conditionsStr;
-                const conditionValues = [];
+                const conditionValues:any[] = [];
                 const relatedField = this.camelCase(relatedModelName);
                 if (result && result.items.length) {
                     for (let i = result.items.length; i--;) {
@@ -1443,8 +1449,8 @@ export class MySQL implements Database {
             })
             .then((ids) => {
                 const relatedField = this.camelCase(relatedModelName);
-                const idConditions = [];
-                const idConditionValues = [];
+                const idConditions:string[] = [];
+                const idConditionValues:number[] = [];
                 const condition = new Condition(Condition.Operator.Or);
                 for (let i = ids.length; i--;) {
                     idConditions.push(`${relatedField} = ?`);

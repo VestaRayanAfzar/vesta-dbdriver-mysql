@@ -26,6 +26,7 @@
   },
   "scripts": {
     "start": "gulp",
+    "test" : "gulp test",
     "deploy": "gulp publish"
   },
   "dependencies": {

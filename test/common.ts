@@ -7,11 +7,11 @@ import {IModelCollection} from "@vesta/core";
 
 export var config = <IMySQLConfig>{
     protocol: 'mysql',
-    host: 'mysql',
+    host: 'localhost',
     port: 3306,
     user: 'root',
-    password: '',
-    database: 'TestDB',
+    password: 'pass',
+    database: 'test',
 };
 export var models = <IModelCollection>{
     User: User,
