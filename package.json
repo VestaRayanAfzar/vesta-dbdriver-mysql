@@ -1,6 +1,6 @@
 {
   "name": "@vesta/driver-mysql",
-  "version": "1.0.11",
+  "version": "2.0.0",
   "description": "Vesta Platform MySQL drievr based on Database Class on @vesta/core",
   "keywords": [
     "NodeJS",
@@ -25,20 +25,19 @@
     "url": "git+https://github.com/VestaRayanAfzar/vesta-driver-mysql.git"
   },
   "scripts": {
-    "dev": "gulp dev[es6]",
+    "start": "gulp",
     "deploy": "gulp publish"
   },
   "dependencies": {
-    "@types/mysql": "^2.15.2",
-    "@vesta/core": "^1.1.8",
-    "mysql": "^2.15.0"
+    "@vesta/core": "^2.0.5",
+    "@vesta/devmaid": "^0.4.1",
+    "mysql": "^2.16.0"
   },
   "devDependencies": {
-    "@types/jasmine": "^2.5.47",
-    "@vesta/devmaid": "^0.3.3",
-    "gulp": "^3.9.1",
-    "jasmine-core": "^2.4.1",
-    "jasmine-node": "^1.14.5",
+    "@types/jest": "^23.3.10",
+    "@types/mysql": "^2.15.5",
+    "gulp": "^4.0.0",
+    "jest": "^23.6.0",
     "tslint": "^5.9.1"
   },
   "private": true
