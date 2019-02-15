@@ -401,7 +401,7 @@ export class MySQL implements Database {
     private updateList<T>(model: T, list, value, transaction: Transaction) {
         const modelName = (model as any).schema.name;
         const table = modelName + this.pascalCase(list) + "List";
-        return this.query(`DELETE FROM ${table} WHERE fk = ?`, [model[this.pk(modelName)]], transaction)
+        return this.query(`DELETE FROM \`${table}\` WHERE fk = ?`, [model[this.pk(modelName)]], transaction)
             .then(() => {
                 return this.addList(model, list, value, transaction);
             });
@@ -543,8 +543,8 @@ export class MySQL implements Database {
                 }
             }
         }
-        return this.query(`DELETE FROM ${this.pascalCase(modelName)}Has${this.pascalCase(relation)}
-                    WHERE ${this.camelCase(modelName)} = ?`, [model[this.pk(modelName)]], transaction)
+        return this.query(`DELETE FROM \`${this.pascalCase(modelName)}Has${this.pascalCase(relation)}\`
+                    WHERE \`${this.camelCase(modelName)}\` = ?`, [model[this.pk(modelName)]], transaction)
             .then(() => this.addRelation(model, relation, ids, transaction));
     }
 
@@ -652,7 +652,7 @@ export class MySQL implements Database {
         const prepare: Promise<Transaction> = this.prepareTransaction(transaction).then((tr) => transaction = tr);
         const result: IResponse<T> = {};
         const fields = this.schemaList[model].getFields();
-        return prepare.then((transaction) => this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} = ?`, [id], transaction))
+        return prepare.then((transaction) => this.query(`DELETE FROM \`${model}\` WHERE \`${this.pk(model)}\` = ?`, [id], transaction))
             .then((deleteResult) => {
                 const instance = new this.models[model]();
                 instance[this.pk(model)] = id;
@@ -685,7 +685,7 @@ export class MySQL implements Database {
                     ids.push(list[i][this.pk(model)]);
                 }
                 if (!ids.length) { return []; }
-                return this.query(`DELETE FROM \`${model}\` WHERE ${this.pk(model)} IN (?)`, [ids], transaction)
+                return this.query(`DELETE FROM \`${model}\` WHERE \`${this.pk(model)}\` IN (?)`, [ids], transaction)
                     .then((deleteResult) => ids);
             })
             .then((ids) => {
@@ -1458,7 +1458,7 @@ export class MySQL implements Database {
                     condition.append(new Condition(Condition.Operator.EqualTo).compare("id", ids[i]));
                 }
                 const idCondition = ids.length ? `(${ids.join(" OR ")})` : "FALSE";
-                return this.query(`DELETE FROM ${modelName + "Has" + this.pascalCase(relation)} WHERE ${this.camelCase(modelName)} = ? AND ${idCondition}`, [model[this.pk(modelName)]].concat(idConditionValues), transaction)
+                return this.query(`DELETE FROM \`${modelName + "Has" + this.pascalCase(relation)}\` WHERE \`${this.camelCase(modelName)}\` = ? AND ${idCondition}`, [model[this.pk(modelName)]].concat(idConditionValues), transaction)
                     .then(() => {
                         const result = { items: ids };
                         if (isWeek && ids.length) {
