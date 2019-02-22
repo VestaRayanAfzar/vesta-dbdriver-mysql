@@ -753,9 +753,9 @@ export class MySQL implements Database {
                 if (modelFields.hasOwnProperty(key)) {
                     if (modelFields[key].properties.type == FieldType.List) { continue; }
                     if (modelFields[key].properties.type != FieldType.Relation) {
-                        fields.push(`\`${alias}\`.${modelFields[key].fieldName}`);
+                        fields.push(`\`${alias}\`.\`${modelFields[key].fieldName}\``);
                     } else if ((!query.relations || query.relations.indexOf(modelFields[key].fieldName) < 0) && (modelFields[key].properties.relation.type == RelationType.One2Many)) {
-                        fields.push(`\`${alias}\`.${modelFields[key].fieldName}`);
+                        fields.push(`\`${alias}\`.\`${modelFields[key].fieldName}\``);
                     }
                 }
             }
@@ -765,7 +765,7 @@ export class MySQL implements Database {
             const relationName: string = typeof query.relations[i] == "string" ? query.relations[i] as string : (query.relations[i] as IRelation).name;
             const field: Field = modelFields[relationName];
             if (!field) {
-                throw new Error(`FIELD ${relationName} NOT FOUND IN model ${query.model} as ${alias}`);
+                throw new Error(`FIELD ${relationName} NOT FOUND IN model ${query.model} as \`${alias}\``);
             }
             const properties = field.properties;
             if (properties.type == FieldType.Relation) {
@@ -782,7 +782,7 @@ export class MySQL implements Database {
                         }
                     }
                     const name = properties.relation.model.schema.name;
-                    modelFiledList.length && fields.push(`(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${name}\` as c WHERE c.${this.pk(name)} = \`${alias}\`.${field.fieldName}  LIMIT 1) as ${field.fieldName}`);
+                    modelFiledList.length && fields.push(`(SELECT CONCAT('{',${modelFiledList.join(',",",')},'}') FROM \`${name}\` as c WHERE c.${this.pk(name)} = \`${alias}\`.${field.fieldName}  LIMIT 1) as \`${field.fieldName}\``);
                 }
             }
         }
@@ -815,7 +815,7 @@ export class MySQL implements Database {
                 }
                 const modelsAlias = join.vql.model + "_" + join.field; // + '__' + Math.floor(Math.random() * 100).toString(); // creating alias need refactoring some part code so i ignored it for this time.
                 if (this.models[alias].schema.getField(join.field) && this.models[join.vql.model]) {
-                    joins.push(`${type} ${join.vql.model} as ${modelsAlias} ON (${alias}.${join.field} = ${modelsAlias}.${this.pk(join.vql.model)})`);
+                    joins.push(`${type} ${join.vql.model} as \`${modelsAlias}\` ON (${alias}.${join.field} = ${modelsAlias}.${this.pk(join.vql.model)})`);
                     const joinParam = this.getQueryParams(join.vql, modelsAlias);
                     if (joinParam.fields) {
                         fields.push(joinParam.fields);
@@ -860,7 +860,7 @@ export class MySQL implements Database {
             if (!this.models[model].schema.getField(condition.comparison.field)) {
                 return "";
             }
-            return `(\`${alias}\`.${condition.comparison.field} ${operator} ${condition.comparison.isValueOfTypeField ? condition.comparison.value : `${this.escape(isUndefined(condition.comparison.value.id) ? condition.comparison.value : +condition.comparison.value.id)}`})`;
+            return `(\`${alias}\`.\`${condition.comparison.field}\` ${operator} ${condition.comparison.isValueOfTypeField ? `\`${condition.comparison.value}\`` : `${this.escape(isUndefined(condition.comparison.value.id) ? condition.comparison.value : +condition.comparison.value.id)}`})`;
         } else {
             const childrenCondition = [];
             for (let i = 0; i < condition.children.length; i++) {
@@ -963,8 +963,8 @@ export class MySQL implements Database {
         }
         const leftKey = this.camelCase(query.model);
         const rightKey = this.camelCase(relationship.model.schema.name);
-        fields.push(`${reverseField.fieldName} as ${leftKey}`);
-        fields.push(`${this.pk(relationship.model.schema.name)} as ${rightKey}`);
+        fields.push(`${reverseField.fieldName} as \`${leftKey}\``);
+        fields.push(`${this.pk(relationship.model.schema.name)} as \`${rightKey}\``);
         return this.query(`SELECT ${fields.join(",")} FROM ${relationship.model.schema.name} WHERE ${reverseField.fieldName} IN (?)`, [ids], transaction)
             .then((list) => {
                 const data = {};
@@ -1395,7 +1395,7 @@ export class MySQL implements Database {
         }
         return preparePromise
             .then(() => {
-                return this.query<any>(`UPDATE \`${modelName}\` SET ${relation} = 0 WHERE ${this.pk(modelName)} = ?`, [model[this.pk(modelName)]], transaction)
+                return this.query<any>(`UPDATE \`${modelName}\` SET \`${relation}\` = 0 WHERE \`${this.pk(modelName)}\` = ?`, [model[this.pk(modelName)]], transaction)
                     .then((updateResult) => {
                         result.items = updateResult;
                         return result;
