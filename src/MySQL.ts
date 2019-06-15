@@ -202,7 +202,7 @@ export class MySQL implements Database {
                         }
                     });
                 }),
-            );
+                );
         }
     }
 
@@ -216,11 +216,11 @@ export class MySQL implements Database {
         });
     }
 
-    public closePool():Promise<boolean>{
-        return new Promise((resolve,reject)=>{
-            this.pool.end(err=>{
-                if(err) reject(err);
-                resolve(true);               
+    public closePool(): Promise<boolean> {
+        return new Promise((resolve, reject) => {
+            this.pool.end(err => {
+                if (err) reject(err);
+                resolve(true);
             })
         })
     }
@@ -1227,8 +1227,10 @@ export class MySQL implements Database {
                 }
                 break;
             case FieldType.Float:
+                    typeSyntax = `FLOAT`;
+                    break;
             case FieldType.Number:
-                typeSyntax = `DECIMAL(${properties.max ? properties.max.toString().length + 10 : 20},10)`;
+                typeSyntax = `DECIMAL(${properties.maxLength || 20},${properties.minLength || 0})`;
                 break;
             case FieldType.Enum:
             case FieldType.Integer:
@@ -1326,7 +1328,7 @@ export class MySQL implements Database {
         const fields = this.schemaList[modelName].getFields();
         const relatedModelName = fields[relation].properties.relation.model.schema.name;
         const newRelation = [];
-        const relationIds:number[] = [];
+        const relationIds: number[] = [];
         if (+value > 0) {
             relationIds.push(+value);
         } else if (value instanceof Array) {
@@ -1362,7 +1364,7 @@ export class MySQL implements Database {
                     result.items = [];
                     return result;
                 }
-                const insertList:string[] = [];
+                const insertList: string[] = [];
                 for (let i = relationIds.length; i--;) {
                     insertList.push(`(${model[this.pk(modelName)]},${this.escape(relationIds[i])})`);
                 }
@@ -1388,7 +1390,7 @@ export class MySQL implements Database {
         const isWeek = relatedInfo ? relatedInfo.isWeek : false;
         const preparePromise: Promise<number> = Promise.resolve(0);
         if (isWeek) {
-            const readRelationId: Promise<number> = +model[relation] ? Promise.resolve(+model[relation]) : this.findById(modelName, model[this.pk(modelName)]).then((result) => result.items ? result.items[0][relation]: 0);
+            const readRelationId: Promise<number> = +model[relation] ? Promise.resolve(+model[relation]) : this.findById(modelName, model[this.pk(modelName)]).then((result) => result.items ? result.items[0][relation] : 0);
             readRelationId.then((relationId) => {
                 return this.deleteOne(relatedModelName, relationId, transaction).then(() => relationId);
             });
@@ -1424,9 +1426,9 @@ export class MySQL implements Database {
 
         return preparePromise
             .then((result) => {
-                const conditions:string[] = [];
+                const conditions: string[] = [];
                 let conditionsStr;
-                const conditionValues:any[] = [];
+                const conditionValues: any[] = [];
                 const relatedField = this.camelCase(relatedModelName);
                 if (result && result.items.length) {
                     for (let i = result.items.length; i--;) {
@@ -1449,8 +1451,8 @@ export class MySQL implements Database {
             })
             .then((ids) => {
                 const relatedField = this.camelCase(relatedModelName);
-                const idConditions:string[] = [];
-                const idConditionValues:number[] = [];
+                const idConditions: string[] = [];
+                const idConditionValues: number[] = [];
                 const condition = new Condition(Condition.Operator.Or);
                 for (let i = ids.length; i--;) {
                     idConditions.push(`${relatedField} = ?`);
