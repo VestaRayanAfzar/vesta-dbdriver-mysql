@@ -860,7 +860,7 @@ export class MySQL implements Database {
             if (!this.models[model].schema.getField(condition.comparison.field)) {
                 return "";
             }
-            return `(\`${alias}\`.\`${condition.comparison.field}\` ${operator} ${condition.comparison.isValueOfTypeField ? `\`${condition.comparison.value}\`` : `${this.escape(isUndefined(condition.comparison.value.id) ? condition.comparison.value : +condition.comparison.value.id)}`})`;
+            return `(\`${alias}\`.\`${condition.comparison.field}\` ${operator} ${condition.comparison.isValueOfTypeField ? `${condition.comparison.value}` : `${this.escape(isUndefined(condition.comparison.value.id) ? condition.comparison.value : +condition.comparison.value.id)}`})`;
         } else {
             const childrenCondition = [];
             for (let i = 0; i < condition.children.length; i++) {
